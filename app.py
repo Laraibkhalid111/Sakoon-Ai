@@ -477,11 +477,15 @@ with st.sidebar:
         )
         st.caption(idle_copy)
 
-        audio_val = st.audio_input(
-            label="Record your message",
-            key="voice_recorder",
-            label_visibility="collapsed",
-        )
+        if st.session_state.thinking:
+            st.info("Listening is disabled while thinking..." if lang != "urdu" else "پیغام کے دوران آواز ریکارڈنگ بند ہے۔")
+            audio_val = None
+        else:
+            audio_val = st.audio_input(
+                label="Record your message",
+                key="voice_recorder",
+                label_visibility="collapsed",
+            )
 
         if audio_val is not None:
             # Read bytes from the UploadedFile object
@@ -749,12 +753,37 @@ if raw_input:
             profile["risk_flags"] = risk_flags + ["crisis_detected"]
         st.session_state.profile = profile
 
-        # Persist: log the user message + mark session as crisis
+        # Determine language for the crisis reply (T8.2)
+        lang = st.session_state.lang
+        if lang == "urdu":
+            crisis_reply = (
+                "میں آپ کی بات سن رہا ہوں، اور ایسا لگتا ہے کہ آپ بہت زیادہ تکلیف میں ہیں۔ "
+                "میں نے اس چیٹ کے اوپر مدد کے لیے معلومات فراہم کی ہیں تاکہ وہ آسانی سے مل سکیں۔ "
+                "براہ کرم ابھی ان سے یا کسی قریبی شخص سے رابطہ کریں۔ میں اب بھی آپ سے بات کرنے کے لیے یہاں موجود ہوں۔"
+            )
+        else:
+            crisis_reply = (
+                "I hear you, and it sounds like you're carrying a lot of pain. "
+                "I have placed helpline resources at the top of our chat so they are easy to find. "
+                "Please connect with them, or a trusted person, right now. I am still here to talk with you."
+            )
+
+        # Add assistant message to display + Groq history
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": crisis_reply,
+            "is_redirect": False,
+            "is_voice": False,
+        })
+        st.session_state.groq_history.append({"role": "assistant", "content": crisis_reply})
+
+        # Persist: log the user message + assistant reply + mark session as crisis
         sid = st.session_state.db_session_id
         if sid:
             ok1 = log_message(sid, "user", raw, input_mode="voice" if _is_voice_turn else "text")
-            ok2 = update_session(sid, risk_level="crisis")
-            if not ok1 or not ok2:
+            ok2 = log_message(sid, "assistant", crisis_reply, input_mode="text")
+            ok3 = update_session(sid, risk_level="crisis")
+            if not ok1 or not ok2 or not ok3:
                 st.session_state.db_error = True
 
         st.rerun()
