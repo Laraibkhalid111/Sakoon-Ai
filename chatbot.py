@@ -25,25 +25,22 @@ from prompts import (
 # Groq client — initialised lazily so import doesn't crash if key is missing
 # ---------------------------------------------------------------------------
 
-_client: Groq | None = None
-
-
 def _get_client() -> Groq:
-    """Return (or lazily create) the Groq client, reading key from st.secrets."""
-    global _client
-    if _client is None:
+    """Return a fresh Groq client, checking .env first, then st.secrets."""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+    api_key = os.getenv("GROQ_API_KEY", "")
+    
+    if not api_key:
         try:
             api_key = st.secrets["GROQ_API_KEY"]
         except (KeyError, FileNotFoundError):
-            # Fallback for local dev using python-dotenv / .env
-            import os
-            from dotenv import load_dotenv
-            load_dotenv()
-            api_key = os.getenv("GROQ_API_KEY", "")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY is not set. Check .streamlit/secrets.toml or .env")
-        _client = Groq(api_key=api_key)
-    return _client
+            pass
+            
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is not set. Check .env or .streamlit/secrets.toml")
+    return Groq(api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -224,3 +221,46 @@ def generate_report_narrative(session_data: dict) -> str:
             "During this session, the user shared their feelings and experiences. "
             "A full summary could not be generated at this time."
         )
+
+
+# ---------------------------------------------------------------------------
+# Whisper transcription — voice input pipeline (M4)
+# ---------------------------------------------------------------------------
+
+def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> str | None:
+    """
+    Send raw audio bytes to Groq Whisper (whisper-large-v3-turbo) and return
+    the transcription as a plain string, or None on any failure.
+
+    Handles: silence/empty audio, API errors, network timeouts, auth issues.
+    Never raises — the caller shows the warning banner copy from DESIGN.md §6.5.
+
+    Args:
+        audio_bytes: Raw audio file bytes from st.audio_input().
+        filename: Filename hint for the Groq API (affects MIME type detection).
+
+    Returns:
+        Transcribed text string, or None on failure / empty result.
+    """
+    if not audio_bytes:
+        return None
+    try:
+        client = _get_client()
+        # Groq Whisper expects a file-like object with a name attribute
+        import io
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = filename
+
+        transcription = client.audio.transcriptions.create(
+            model="whisper-large-v3-turbo",
+            file=audio_file,
+            response_format="text",
+        )
+        # response_format="text" returns a plain string (not an object)
+        text = transcription.strip() if isinstance(transcription, str) else (transcription.text or "").strip()
+        # Treat very short or empty transcriptions as silence/failure
+        if not text or len(text) < 2:
+            return None
+        return text
+    except Exception:
+        return None

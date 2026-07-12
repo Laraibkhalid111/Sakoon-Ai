@@ -6,6 +6,24 @@ Sakoon AI is a free, bilingual (Urdu + English, voice or text) mental wellness c
 
 ---
 
+## Author
+- **Laraib Khalid**
+
+---
+
+## Key Features
+
+1. **Bilingual Conversational Interface:** Support for English, Urdu Script, and Roman Urdu. Mirrors the user's language/script choice instantly.
+2. **Bilingual Speech-to-Text:** Integration with Groq Whisper (`whisper-large-v3-turbo`) for natural, audio-based inputs.
+3. **Structured Session Profile & Extraction:** Dynamically extracts name, email, phone, primary concern, mood, symptoms, and risk flags via Groq JSON mode.
+4. **Interactive Self-Care:** Offers grounding/breathing exercises directly in the UI with interactive step-by-step guides.
+5. **Deterministic Safety Layer:** Built-in keyword patterns for English, Urdu, and Roman Urdu to intercept crisis topics immediately, show a pinned helpline banner, and send supportive replies.
+6. **PDF Wellness Report:** Generates formatted A4 PDF reports (with embedded Urdu font rendering support).
+7. **Email Delivery:** Automatically emails the PDF report to the user using secure SMTP.
+8. **Secure Database Logging:** Maintains conversation history and risk levels inside SQLite (`sakoon.db`) with zero plain-text secrets.
+
+---
+
 ## Tech Stack
 
 | Concern | Tool |
@@ -20,10 +38,28 @@ Sakoon AI is a free, bilingual (Urdu + English, voice or text) mental wellness c
 
 ---
 
+## Directory Structure
+
+```
+Sakoon-Ai/
+├── app.py                      # Main Streamlit application and layout logic
+├── chatbot.py                  # Groq client wrapper, JSON mode parser, and Whisper STT
+├── safety.py                   # Deterministic regex-based crisis keyword detector
+├── database.py                 # SQLite session storage and message logger
+├── report.py                   # PDF generator (fpdf2) with Unicode Urdu font support
+├── emailer.py                  # SMTP email dispatch utility
+├── prompts.py                  # System instructions, redirect texts, and intake flows
+├── NotoNastaliqUrdu-Regular.ttf # Unicode Urdu font for report rendering
+├── requirements.txt            # Project dependencies
+└── README.md                   # Project documentation
+```
+
+---
+
 ## Local Setup
 
 ```bash
-# 1. Clone
+# 1. Clone the repository
 git clone https://github.com/Laraibkhalid111/Sakoon-Ai.git
 cd Sakoon-Ai
 
@@ -43,7 +79,7 @@ mkdir -p .streamlit
 cp .env .streamlit/secrets.toml             # or fill secrets.toml manually
 # Required keys: GROQ_API_KEY, EMAIL_ADDRESS, EMAIL_APP_PASSWORD
 
-# 5. Run
+# 5. Run the application
 streamlit run app.py
 ```
 
@@ -67,4 +103,4 @@ Sakoon AI is a self-care support tool, **not** a clinical diagnostic instrument.
 
 ---
 
-*Built with Streamlit · Groq · fpdf2 · sqlite3*
+*Built by Laraib Khalid with Streamlit · Groq · fpdf2 · sqlite3*
