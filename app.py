@@ -10,6 +10,10 @@ import streamlit as st
 from prompts import WELCOME_MESSAGE, OFF_TOPIC_REDIRECT, ERROR_COPY
 from chatbot import get_ai_response
 from safety import check_crisis          # deterministic crisis detector — runs before every Groq call
+from database import (
+    init_db, upsert_user, update_user, create_session, update_session,
+    close_session, log_message, upsert_snapshot, get_recent_sessions,
+)
 
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -331,8 +335,12 @@ def _init_state():
         "mood": None,
         "crisis_triggered": False,
         "show_error": None,       # None | "groq" | "whisper"
+        "db_error": False,        # True when a non-critical DB write fails
         "thinking": False,
         "report_bytes": None,
+        # DB identifiers (populated after first message)
+        "db_session_id": None,
+        "db_user_id": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -354,6 +362,13 @@ def _init_state():
 
 
 _init_state()
+
+# ── DB init + session creation (once per app session) ────────────────────────
+_db_ok = init_db()
+if _db_ok and st.session_state.db_session_id is None:
+    sid = create_session(user_id=None)
+    if sid:
+        st.session_state.db_session_id = sid
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
@@ -456,6 +471,13 @@ if st.session_state.show_error == "groq":
     msg = ERROR_COPY["groq_failure"]["ur" if lang == "urdu" else "en"]
     _banner("error", f"❌ {msg}")
 
+# Non-alarming DB write failure banner (DESIGN.md §8)
+if st.session_state.db_error:
+    lang = st.session_state.lang
+    msg = ERROR_COPY["db_failure"]["ur" if lang == "urdu" else "en"]
+    _banner("warning", f"⚠️ {msg}")
+    st.session_state.db_error = False  # reset after display so it doesn't persist
+
 # Chat history
 for msg in st.session_state.messages:
     _render_bubble(
@@ -496,9 +518,7 @@ if user_input and user_input.strip():
     st.session_state.groq_history.append({"role": "user", "content": raw})
 
     if is_crisis:
-        # ── CRISIS BRANCH — bypass Groq, set flags, rerun ─────────────────
-        # The pinned crisis card (rendered at top of main area on rerun)
-        # IS the response for this turn. The chat continues normally below it.
+        # ── CRISIS BRANCH — bypass Groq, set flags, persist, rerun ──────────
         if not st.session_state.crisis_triggered:
             st.session_state.crisis_triggered = True
         profile = st.session_state.profile
@@ -506,12 +526,24 @@ if user_input and user_input.strip():
         if "crisis_detected" not in risk_flags:
             profile["risk_flags"] = risk_flags + ["crisis_detected"]
         st.session_state.profile = profile
-        # No Groq call — no assistant bubble added for this turn.
-        # The crisis card pinned at the top is the visible response.
+
+        # Persist: log the user message + mark session as crisis
+        sid = st.session_state.db_session_id
+        if sid:
+            ok1 = log_message(sid, "user", raw, input_mode="text")
+            ok2 = update_session(sid, risk_level="crisis")
+            if not ok1 or not ok2:
+                st.session_state.db_error = True
+
         st.rerun()
 
     else:
-        # ── NORMAL BRANCH — call Groq ──────────────────────────────────────
+        # ── NORMAL BRANCH — log user msg, call Groq ────────────────────────
+        sid = st.session_state.db_session_id
+        if sid:
+            if not log_message(sid, "user", raw, input_mode="text"):
+                st.session_state.db_error = True
+
         st.session_state.thinking = True
         with thinking_placeholder:
             _render_typing()
@@ -577,5 +609,50 @@ if user_input and user_input.strip():
             "role": "assistant",
             "content": reply_text,
         })
+
+        # ── Persist: log assistant msg, upsert snapshot, update user/session ─
+        profile = st.session_state.profile
+        sid = st.session_state.db_session_id
+        if sid:
+            # Log assistant reply
+            if not log_message(sid, "assistant", reply_text, input_mode="text"):
+                st.session_state.db_error = True
+
+            # Upsert symptom snapshot with accumulated extracted data
+            ok = upsert_snapshot(
+                session_id=sid,
+                mood_rating=profile.get("mood_rating"),
+                symptoms=profile.get("symptoms", []),
+                triggers=profile.get("possible_triggers", []),
+                coping_suggestions=[],  # populated in M5 report generation
+            )
+            if not ok:
+                st.session_state.db_error = True
+
+            # Update session primary_concern when first known
+            if profile.get("primary_concern"):
+                update_session(sid, primary_concern=profile["primary_concern"])
+
+            # Create/update user row when contact info first arrives
+            if profile.get("name") or profile.get("email"):
+                uid = st.session_state.db_user_id
+                if uid is None:
+                    uid = upsert_user(
+                        name=profile.get("name"),
+                        email=profile.get("email"),
+                        phone=profile.get("phone"),
+                        preferred_language=st.session_state.lang,
+                    )
+                    if uid:
+                        st.session_state.db_user_id = uid
+                        update_session(sid, user_id=uid)
+                else:
+                    update_user(
+                        uid,
+                        name=profile.get("name"),
+                        email=profile.get("email"),
+                        phone=profile.get("phone"),
+                        preferred_language=st.session_state.lang,
+                    )
 
         st.rerun()
