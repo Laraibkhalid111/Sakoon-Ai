@@ -8,12 +8,13 @@ import time
 import streamlit as st
 
 from prompts import WELCOME_MESSAGE, OFF_TOPIC_REDIRECT, ERROR_COPY
-from chatbot import get_ai_response, transcribe_audio
+from chatbot import get_ai_response, transcribe_audio, generate_report_narrative
 from safety import check_crisis          # deterministic crisis detector — runs before every Groq call
 from database import (
     init_db, upsert_user, update_user, create_session, update_session,
     close_session, log_message, upsert_snapshot, get_recent_sessions,
 )
+from report import build_report, build_session_data
 
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -48,6 +49,16 @@ CUSTOM_CSS = """
   --color-error-bg: #FBEAE6;
   --color-crisis: #B23A48;
   --color-crisis-bg: #FBE9EA;
+  --color-crisis-border: #B23A48;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
 }
 
 html, body, [class*="css"] {
@@ -75,19 +86,41 @@ html, body, [class*="css"] {
   box-shadow: 0 0 0 3px rgba(91,138,166,0.15) !important;
 }
 
-/* Buttons */
+/* Buttons - Section 6.6 */
 .stButton > button {
   border-radius: 10px !important;
   font-family: 'Inter', sans-serif !important;
   transition: all 0.15s ease !important;
+  padding: 10px 20px !important;
 }
-.stButton > button[kind="primary"],
-.stButton > button:not([kind]) {
+/* Primary: Generate Report */
+.stButton > button[kind="primary"] {
   background-color: var(--color-primary) !important;
-  color: white !important;
+  color: var(--color-text-inverse) !important;
   border: none !important;
 }
-.stButton > button:hover {
+.stButton > button[kind="primary"]:hover {
+  background-color: var(--color-primary-dark) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(63,108,134,0.25) !important;
+}
+.stButton > button[kind="primary"]:active { transform: translateY(0); box-shadow: none !important; }
+.stButton > button[kind="primary"]:disabled { opacity: 0.5; cursor: not-allowed !important; }
+/* Secondary: Resend Email - transparent bg, primary border */
+.stButton > button[kind="secondary"] {
+  background: transparent !important;
+  color: var(--color-primary) !important;
+  border: 1px solid var(--color-primary) !important;
+}
+.stButton > button[kind="secondary"]:hover { background: var(--color-primary-light) !important; }
+.stButton > button[kind="secondary"]:disabled { opacity: 0.5; cursor: not-allowed !important; }
+/* Fallback for non-kind buttons */
+.stButton > button:not([kind]) {
+  background-color: var(--color-primary) !important;
+  color: var(--color-text-inverse) !important;
+  border: none !important;
+}
+.stButton > button:not([kind]):hover {
   background-color: var(--color-primary-dark) !important;
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(63,108,134,0.25) !important;
@@ -119,9 +152,9 @@ html, body, [class*="css"] {
 }
 
 .sakoon-bubble {
-  max-width: 72%;
+  max-width: 75%;
   padding: 12px 16px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   font-size: 15px;
   line-height: 1.6;
   position: relative;
@@ -187,8 +220,11 @@ html, body, [class*="css"] {
 .sakoon-banner.success { background: var(--color-success-bg); border: 1px solid var(--color-success); }
 .sakoon-banner.crisis  {
   background: var(--color-crisis-bg);
-  border: 2px solid var(--color-crisis);
+  border: 2px solid var(--color-crisis-border);
   font-size: 15px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 /* Language badge */
@@ -226,7 +262,7 @@ html, body, [class*="css"] {
 .stDeployButton { display: none; }
 </style>
 """
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(re.sub(r"\n\s*\n", "\n", CUSTOM_CSS), unsafe_allow_html=True)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -455,12 +491,47 @@ with st.sidebar:
         st.markdown(_mood_pill(st.session_state.mood), unsafe_allow_html=True)
         st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
 
-    # Report button (M5 — placeholder)
-    if st.button("📄 Generate Report", use_container_width=True, key="btn_report"):
-        st.info("Report generation will be available after the conversation develops (M5).")
+    # ── Generate Report (DESIGN.md §6.6 primary button, T5.6) ──────────────
+    # Disabled until at least one exchange has happened
+    can_report = len(st.session_state.messages) >= 2
+    if st.button(
+        "📄 Generate Report",
+        use_container_width=True,
+        key="btn_report",
+        disabled=not can_report,
+        type="primary",
+    ):
+        lang = st.session_state.lang
+        with st.spinner("Building your report..." if lang != "urdu" else "رپورٹ تیار کی جا رہی ہے..."):
+            session_data = build_session_data(st.session_state)
+            narrative = generate_report_narrative(session_data)
+            pdf_bytes = build_report(session_data, narrative=narrative)
+
+        if pdf_bytes:
+            st.session_state.report_bytes = pdf_bytes
+            success_msg = (
+                "رپورٹ تیار ہے! نیچے سے ڈاؤن لوڈ کریں۔"
+                if lang == "urdu" else
+                "Your report is ready! Download it below."
+            )
+            st.success(f"✅ {success_msg}")
+        else:
+            err_copy = ERROR_COPY["pdf_failure"]["ur" if lang == "urdu" else "en"]
+            st.error(f"❌ {err_copy}")
+
+    # Download button (only shown after successful generation)
+    if st.session_state.report_bytes:
+        st.download_button(
+            label="⬇️ Download PDF",
+            data=st.session_state.report_bytes,
+            file_name="Sakoon_Wellness_Report.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+            key="btn_download",
+        )
 
     # Resend email button (M6 — placeholder)
-    if st.button("📧 Resend to Email", use_container_width=True, key="btn_email"):
+    if st.button("📧 Resend to Email", use_container_width=True, key="btn_email", type="secondary"):
         st.info("Email delivery will be enabled in M6.")
 
     # Crisis helpline — always visible once triggered
@@ -483,13 +554,14 @@ with st.sidebar:
 
 # ── Main chat area ────────────────────────────────────────────────────────────
 
-# Crisis pinned card (DESIGN.md §7)
+# Crisis pinned card (DESIGN.md §7) — exact hard-coded copy, never LLM-generated
 if st.session_state.crisis_triggered:
     lang = st.session_state.lang
     if lang == "urdu":
         crisis_text = (
             "💙 <strong>لگتا ہے آپ اس وقت کسی بہت مشکل دور سے گزر رہے ہیں۔ "
-            "آپ کو یہ اکیلے نہیں سہنا۔</strong><br><br>"
+            "آپ کو یہ اکیلے نہیں سہنا۔ اگر آپ فوری خطرے میں ہیں یا خود کو نقصان پہنچانے کا "
+            "سوچ رہے ہیں، تو ابھی رابطہ کریں:</strong><br><br>"
             "📞 امنگ مینٹل ہیلتھ ہیلپ لائن (پاکستان): <strong>0311-7786264</strong><br>"
             "📞 یا اپنے قریبی ایمرجنسی نمبر پر<br><br>"
             "میں یہاں آپ سے بات کرنے کے لیے موجود ہوں، لیکن براہ کرم کسی ایسے "
@@ -498,7 +570,8 @@ if st.session_state.crisis_triggered:
     else:
         crisis_text = (
             "💙 <strong>It sounds like you're going through something really heavy right now. "
-            "You don't have to face this alone.</strong><br><br>"
+            "You don't have to face this alone. If you're in immediate danger or thinking "
+            "about harming yourself, please reach out right now:</strong><br><br>"
             "📞 Umang Mental Health Helpline (Pakistan): <strong>0311-7786264</strong><br>"
             "📞 Or your local emergency number<br><br>"
             "I'm still here to talk with you, but please also consider reaching "
@@ -540,11 +613,17 @@ thinking_placeholder = st.empty()
 
 # ── Chat input handling ───────────────────────────────────────────────────────
 
-placeholder_text = (
-    "آپ کیسا محسوس کر رہے ہیں، لکھیں..."
-    if st.session_state.lang == "urdu"
-    else "Type how you're feeling..."
-)
+# Placeholder swaps to 'Sakoon is thinking...' while disabled — DESIGN.md §6.4
+if st.session_state.thinking:
+    placeholder_text = (
+        "...ساکون سوچ رہا ہے" if st.session_state.lang == "urdu" else "Sakoon is thinking..."
+    )
+else:
+    placeholder_text = (
+        "آپ کیسا محسوس کر رہے ہیں، لکھیں..."
+        if st.session_state.lang == "urdu"
+        else "Type how you're feeling..."
+    )
 
 user_input = st.chat_input(placeholder_text, disabled=st.session_state.thinking)
 
