@@ -8,7 +8,7 @@ import time
 import streamlit as st
 
 from prompts import WELCOME_MESSAGE, OFF_TOPIC_REDIRECT, ERROR_COPY
-from chatbot import get_ai_response
+from chatbot import get_ai_response, transcribe_audio
 from safety import check_crisis          # deterministic crisis detector — runs before every Groq call
 from database import (
     init_db, upsert_user, update_user, create_session, update_session,
@@ -341,6 +341,9 @@ def _init_state():
         # DB identifiers (populated after first message)
         "db_session_id": None,
         "db_user_id": None,
+        # Voice pipeline state
+        "whisper_error": False,   # True when Whisper call fails
+        "pending_voice_text": None,  # Transcript ready to inject as a message
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -400,9 +403,50 @@ with st.sidebar:
     )
     st.markdown('<hr style="border-color:#E4E1DB;margin:16px 0">', unsafe_allow_html=True)
 
-    # Voice input (M4 — placeholder with note)
+    # ── Voice Input (DESIGN.md §6.5) ────────────────────────────────────────
     with st.expander("🎙️ Voice Input", expanded=False):
-        st.info("Voice input will be enabled in the next update (M4).", icon="🎙️")
+        lang = st.session_state.lang
+        idle_copy = (
+            "بغور سن رہے ہیں..." if lang == "urdu" else "Tap to record. Speak in Urdu or English."
+        )
+        st.caption(idle_copy)
+
+        audio_val = st.audio_input(
+            label="Record your message",
+            key="voice_recorder",
+            label_visibility="collapsed",
+        )
+
+        if audio_val is not None:
+            # Read bytes from the UploadedFile object
+            audio_bytes = audio_val.read()
+            spinner_copy = (
+                "بغور سن رہے ہیں..." if lang == "urdu" else "Listening carefully..."
+            )
+            with st.spinner(spinner_copy):
+                transcript = transcribe_audio(audio_bytes, filename="voice.wav")
+
+            if transcript:
+                # Store transcript; main loop below will inject it as a message
+                st.session_state.pending_voice_text = transcript
+                st.session_state.whisper_error = False
+                st.rerun()  # collapses expander, injects message
+            else:
+                st.session_state.whisper_error = True
+                st.rerun()
+
+        # Failure banner inside expander (DESIGN.md §6.5)
+        if st.session_state.whisper_error:
+            fail_copy = (
+                ERROR_COPY["whisper_failure"]["ur"]
+                if lang == "urdu"
+                else ERROR_COPY["whisper_failure"]["en"]
+            )
+            st.markdown(
+                f'<div class="sakoon-banner warning" style="margin-top:8px">'  
+                f'⚠️ {fail_copy}</div>',
+                unsafe_allow_html=True,
+            )
 
     st.markdown('<hr style="border-color:#E4E1DB;margin:16px 0">', unsafe_allow_html=True)
 
@@ -465,6 +509,10 @@ if st.session_state.crisis_triggered:
         unsafe_allow_html=True,
     )
 
+# Whisper failure banner in main area (only if expander is collapsed/not shown)
+if st.session_state.get("whisper_error") and not st.session_state.get("pending_voice_text"):
+    pass  # shown inside the expander; avoid double-display
+
 # Error banner (DESIGN.md §8)
 if st.session_state.show_error == "groq":
     lang = st.session_state.lang
@@ -500,8 +548,20 @@ placeholder_text = (
 
 user_input = st.chat_input(placeholder_text, disabled=st.session_state.thinking)
 
-if user_input and user_input.strip():
-    raw = user_input.strip()
+# ── Determine raw input (voice transcript takes priority over typed) ──────────
+_is_voice_turn = False
+if st.session_state.pending_voice_text:
+    raw_input = st.session_state.pending_voice_text
+    st.session_state.pending_voice_text = None
+    st.session_state.whisper_error = False
+    _is_voice_turn = True
+elif user_input and user_input.strip():
+    raw_input = user_input.strip()
+else:
+    raw_input = None
+
+if raw_input:
+    raw = raw_input
 
     # ── SAFETY CHECK — runs deterministically BEFORE Groq (IDEA.md §8) ────
     # This is a hard check — it cannot be prompted away. If it fires, the
@@ -513,7 +573,7 @@ if user_input and user_input.strip():
         "role": "user",
         "content": raw,
         "is_redirect": False,
-        "is_voice": False,
+        "is_voice": _is_voice_turn,
     })
     st.session_state.groq_history.append({"role": "user", "content": raw})
 
@@ -530,7 +590,7 @@ if user_input and user_input.strip():
         # Persist: log the user message + mark session as crisis
         sid = st.session_state.db_session_id
         if sid:
-            ok1 = log_message(sid, "user", raw, input_mode="text")
+            ok1 = log_message(sid, "user", raw, input_mode="voice" if _is_voice_turn else "text")
             ok2 = update_session(sid, risk_level="crisis")
             if not ok1 or not ok2:
                 st.session_state.db_error = True
@@ -541,7 +601,7 @@ if user_input and user_input.strip():
         # ── NORMAL BRANCH — log user msg, call Groq ────────────────────────
         sid = st.session_state.db_session_id
         if sid:
-            if not log_message(sid, "user", raw, input_mode="text"):
+            if not log_message(sid, "user", raw, input_mode="voice" if _is_voice_turn else "text"):
                 st.session_state.db_error = True
 
         st.session_state.thinking = True
