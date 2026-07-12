@@ -114,6 +114,7 @@ html, body, [class*="css"] {
   border: 1px solid var(--color-primary) !important;
 }
 .stButton > button[kind="secondary"]:hover { background: var(--color-primary-light) !important; }
+.stButton > button[kind="secondary"]:active { background: rgba(91,138,166,0.2) !important; }
 .stButton > button[kind="secondary"]:disabled { opacity: 0.5; cursor: not-allowed !important; }
 /* Fallback for non-kind buttons */
 .stButton > button:not([kind]) {
@@ -159,6 +160,11 @@ html, body, [class*="css"] {
   font-size: 15px;
   line-height: 1.6;
   position: relative;
+}
+@media (max-width: 640px) {
+  .sakoon-bubble {
+    max-width: 88% !important;
+  }
 }
 .sakoon-bubble.assistant {
   background: var(--color-primary-light);
@@ -246,7 +252,6 @@ html, body, [class*="css"] {
   border-radius: 999px;
   font-size: 13px;
   font-family: 'Inter', sans-serif;
-  color: white;
 }
 
 /* Disclaimer */
@@ -334,15 +339,27 @@ def _render_typing():
 def _mood_pill(rating: int | None) -> str:
     if rating is None:
         return ""
-    if rating <= 3:
-        color, label = "#D9A25C", "Having a hard time"
-    elif rating <= 6:
-        color, label = "#5B8AA6", "Getting through it"
+    lang = st.session_state.get("lang", "english")
+    if lang == "urdu":
+        prefix = "🫧 آج کا مزاج: "
+        if rating <= 3:
+            bg, text, label = "var(--color-warning-bg)", "var(--color-warning)", "مشکل وقت"
+        elif rating <= 6:
+            bg, text, label = "var(--color-primary-light)", "var(--color-primary-dark)", "بس گزر رہا ہے"
+        else:
+            bg, text, label = "#EBF5F0", "var(--color-secondary-dark)", "بہتر اور مستحکم ہے"
     else:
-        color, label = "#8FBFA6", "Feeling steady"
+        prefix = "🫧 Mood today: "
+        if rating <= 3:
+            bg, text, label = "var(--color-warning-bg)", "var(--color-warning)", "Having a hard time"
+        elif rating <= 6:
+            bg, text, label = "var(--color-primary-light)", "var(--color-primary-dark)", "Getting through it"
+        else:
+            bg, text, label = "#EBF5F0", "var(--color-secondary-dark)", "Feeling steady"
+            
     return (
-        f'<span class="sakoon-mood-pill" style="background:{color}">'
-        f'🫧 Mood today: {label}</span>'
+        f'<span class="sakoon-mood-pill" style="background:{bg}; color:{text}; font-weight: 600;">'
+        f'{prefix}{label}</span>'
     )
 
 
@@ -369,6 +386,7 @@ def _init_state():
         "profile": {**WELCOME_MESSAGE["extracted"]},
         "stage": "greeting",
         "lang": "english",
+        "detected_lang": "english",
         "mood": None,
         "crisis_triggered": False,
         "show_error": None,       # None | "groq" | "whisper"
@@ -411,6 +429,15 @@ if _db_ok and st.session_state.db_session_id is None:
     sid = create_session(user_id=None)
     if sid:
         st.session_state.db_session_id = sid
+
+# Resolve language override immediately (T7.1)
+lang_override = st.session_state.get("lang_override_select", "Auto")
+if lang_override == "English":
+    st.session_state.lang = "english"
+elif lang_override == "اردو":
+    st.session_state.lang = "urdu"
+else:
+    st.session_state.lang = st.session_state.get("detected_lang", "english")
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
@@ -597,14 +624,7 @@ with st.sidebar:
                 warning_email_msg = ERROR_COPY["smtp_failure"]["ur" if lang == "urdu" else "en"]
                 st.warning(f"⚠️ {warning_email_msg}")
 
-    # Crisis helpline — always visible once triggered
-    if st.session_state.crisis_triggered:
-        st.markdown(
-            '<div class="sakoon-banner crisis" style="margin-top:16px">'
-            '💙 <strong>Need help now?</strong><br>'
-            '📞 Umang Helpline: <strong>0311-7786264</strong></div>',
-            unsafe_allow_html=True,
-        )
+
 
     st.markdown('<hr style="border-color:#E4E1DB;margin:16px 0">', unsafe_allow_html=True)
     st.markdown(
@@ -765,37 +785,82 @@ if raw_input:
             st.session_state.show_error = None
 
         # ── Update session language ───────────────────────────────────────
-        lang = response.get("detected_language", "english")
-        if lang_override == "اردو":
-            lang = "urdu"
-        elif lang_override == "English":
-            lang = "english"
-        st.session_state.lang = lang
+        detected = response.get("detected_language", "english")
+        st.session_state.detected_lang = detected
+        
+        # Resolve active language
+        lang_override_val = st.session_state.get("lang_override_select", "Auto")
+        if lang_override_val == "English":
+            st.session_state.lang = "english"
+        elif lang_override_val == "اردو":
+            st.session_state.lang = "urdu"
+        else:
+            st.session_state.lang = detected
+            
+        lang = st.session_state.lang
 
         # ── Update conversation stage ─────────────────────────────────────
         st.session_state.stage = response.get("conversation_stage", st.session_state.stage)
 
-        # ── Merge extracted profile fields ────────────────────────────────
+        # ── Merge extracted profile fields & validate (DESIGN.md §8, T7.4) ──
         ext = response.get("extracted", {})
         profile = st.session_state.profile
-        for field in ("name", "email", "phone", "primary_concern"):
-            if ext.get(field):
-                profile[field] = ext[field]
+        
+        valid_name = True
+        name_val = ext.get("name")
+        if name_val:
+            name_val = name_val.strip()
+            if not name_val or name_val.isdigit():
+                valid_name = False
+            else:
+                profile["name"] = name_val
+                
+        valid_email = True
+        email_val = ext.get("email")
+        if email_val:
+            email_val = email_val.strip()
+            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_val):
+                valid_email = False
+            else:
+                profile["email"] = email_val
+                
+        valid_phone = True
+        phone_val = ext.get("phone")
+        if phone_val:
+            phone_val = phone_val.strip().replace(" ", "").replace("-", "")
+            if not re.match(r"^\+?\d{10,13}$", phone_val):
+                valid_phone = False
+            else:
+                profile["phone"] = phone_val
+                
+        if ext.get("primary_concern"):
+            profile["primary_concern"] = ext["primary_concern"]
+            
         if ext.get("mood_rating") is not None:
             profile["mood_rating"] = ext["mood_rating"]
             st.session_state.mood = ext["mood_rating"]
+            
         for list_field in ("symptoms", "possible_triggers", "risk_flags"):
             existing = profile.get(list_field, [])
             new_items = ext.get(list_field, [])
             merged = list(dict.fromkeys(existing + new_items))
             profile[list_field] = merged
+            
         st.session_state.profile = profile
 
-        # ── Determine reply (off-topic override per DESIGN.md §8) ─────────
+        # ── Determine reply (off-topic / validation override per DESIGN.md §8) ──
         is_on_topic = response.get("is_on_topic", True)
+        is_redirect = False
+        
         if not is_on_topic:
             reply_text = _redirect_copy(lang)
             is_redirect = True
+        elif not valid_name:
+            reply_text = "مجھے آپ کا نام سمجھ نہیں آیا — میں آپ کو کیا کہہ کر بلاؤں؟" if lang == "urdu" else "I didn't quite catch your name — what should I call you?"
+        elif not valid_email:
+            reply_text = "یہ مکمل ای میل نہیں لگ رہی — ایک بار دوبارہ چیک کر لیں؟" if lang == "urdu" else "That doesn't look like a complete email — mind double-checking it?"
+        elif not valid_phone:
+            reply_text = "براہ کرم اپنا نمبر کوڈ کے ساتھ لکھیں، مثلاً +923001234567" if lang == "urdu" else "Could you share your number with the country code, like +923001234567?"
         else:
             reply_text = response.get("reply_to_user", "...")
             is_redirect = False
