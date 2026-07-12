@@ -9,7 +9,7 @@ import streamlit as st
 
 from prompts import WELCOME_MESSAGE, OFF_TOPIC_REDIRECT, ERROR_COPY
 from chatbot import get_ai_response
-from safety import check_crisis          # implemented in M2; stub returns False for now
+from safety import check_crisis          # deterministic crisis detector — runs before every Groq call
 
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -481,13 +481,12 @@ user_input = st.chat_input(placeholder_text, disabled=st.session_state.thinking)
 if user_input and user_input.strip():
     raw = user_input.strip()
 
-    # ── Crisis check (M2 — safety.py stub returns False until M2) ──────────
+    # ── SAFETY CHECK — runs deterministically BEFORE Groq (IDEA.md §8) ────
+    # This is a hard check — it cannot be prompted away. If it fires, the
+    # normal LLM reply is bypassed entirely for this turn.
     is_crisis = check_crisis(raw)
-    if is_crisis and not st.session_state.crisis_triggered:
-        st.session_state.crisis_triggered = True
-        st.session_state.profile["risk_flags"] = st.session_state.profile.get("risk_flags", []) + ["crisis_detected"]
 
-    # ── Add user message to display + Groq history ──────────────────────────
+    # ── Add user message to display + Groq history ─────────────────────────
     st.session_state.messages.append({
         "role": "user",
         "content": raw,
@@ -496,72 +495,87 @@ if user_input and user_input.strip():
     })
     st.session_state.groq_history.append({"role": "user", "content": raw})
 
-    # ── Show typing indicator ─────────────────────────────────────────────
-    st.session_state.thinking = True
-    with thinking_placeholder:
-        _render_typing()
+    if is_crisis:
+        # ── CRISIS BRANCH — bypass Groq, set flags, rerun ─────────────────
+        # The pinned crisis card (rendered at top of main area on rerun)
+        # IS the response for this turn. The chat continues normally below it.
+        if not st.session_state.crisis_triggered:
+            st.session_state.crisis_triggered = True
+        profile = st.session_state.profile
+        risk_flags = profile.get("risk_flags", [])
+        if "crisis_detected" not in risk_flags:
+            profile["risk_flags"] = risk_flags + ["crisis_detected"]
+        st.session_state.profile = profile
+        # No Groq call — no assistant bubble added for this turn.
+        # The crisis card pinned at the top is the visible response.
+        st.rerun()
 
-    # ── Groq call ─────────────────────────────────────────────────────────
-    response = get_ai_response(
-        st.session_state.groq_history,
-        current_lang=st.session_state.lang,
-    )
-
-    st.session_state.thinking = False
-    thinking_placeholder.empty()
-
-    # ── Handle error ──────────────────────────────────────────────────────
-    if response.get("_error"):
-        st.session_state.show_error = "groq"
     else:
-        st.session_state.show_error = None
+        # ── NORMAL BRANCH — call Groq ──────────────────────────────────────
+        st.session_state.thinking = True
+        with thinking_placeholder:
+            _render_typing()
 
-    # ── Update session language ───────────────────────────────────────────
-    lang = response.get("detected_language", "english")
-    if lang_override == "اردو":
-        lang = "urdu"
-    elif lang_override == "English":
-        lang = "english"
-    st.session_state.lang = lang
+        response = get_ai_response(
+            st.session_state.groq_history,
+            current_lang=st.session_state.lang,
+        )
 
-    # ── Update conversation stage ─────────────────────────────────────────
-    st.session_state.stage = response.get("conversation_stage", st.session_state.stage)
+        st.session_state.thinking = False
+        thinking_placeholder.empty()
 
-    # ── Merge extracted profile fields ────────────────────────────────────
-    ext = response.get("extracted", {})
-    profile = st.session_state.profile
-    for field in ("name", "email", "phone", "primary_concern"):
-        if ext.get(field):
-            profile[field] = ext[field]
-    if ext.get("mood_rating") is not None:
-        profile["mood_rating"] = ext["mood_rating"]
-        st.session_state.mood = ext["mood_rating"]
-    for list_field in ("symptoms", "possible_triggers", "risk_flags"):
-        existing = profile.get(list_field, [])
-        new_items = ext.get(list_field, [])
-        merged = list(dict.fromkeys(existing + new_items))  # deduplicate, preserve order
-        profile[list_field] = merged
-    st.session_state.profile = profile
+        # ── Handle error ──────────────────────────────────────────────────
+        if response.get("_error"):
+            st.session_state.show_error = "groq"
+        else:
+            st.session_state.show_error = None
 
-    # ── Determine reply text (off-topic override per DESIGN.md §8) ───────
-    is_on_topic = response.get("is_on_topic", True)
-    if not is_on_topic:
-        reply_text = _redirect_copy(lang)
-        is_redirect = True
-    else:
-        reply_text = response.get("reply_to_user", "...")
-        is_redirect = False
+        # ── Update session language ───────────────────────────────────────
+        lang = response.get("detected_language", "english")
+        if lang_override == "اردو":
+            lang = "urdu"
+        elif lang_override == "English":
+            lang = "english"
+        st.session_state.lang = lang
 
-    # ── Add assistant message to display + Groq history ──────────────────
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": reply_text,
-        "is_redirect": is_redirect,
-        "is_voice": False,
-    })
-    st.session_state.groq_history.append({
-        "role": "assistant",
-        "content": reply_text,
-    })
+        # ── Update conversation stage ─────────────────────────────────────
+        st.session_state.stage = response.get("conversation_stage", st.session_state.stage)
 
-    st.rerun()
+        # ── Merge extracted profile fields ────────────────────────────────
+        ext = response.get("extracted", {})
+        profile = st.session_state.profile
+        for field in ("name", "email", "phone", "primary_concern"):
+            if ext.get(field):
+                profile[field] = ext[field]
+        if ext.get("mood_rating") is not None:
+            profile["mood_rating"] = ext["mood_rating"]
+            st.session_state.mood = ext["mood_rating"]
+        for list_field in ("symptoms", "possible_triggers", "risk_flags"):
+            existing = profile.get(list_field, [])
+            new_items = ext.get(list_field, [])
+            merged = list(dict.fromkeys(existing + new_items))
+            profile[list_field] = merged
+        st.session_state.profile = profile
+
+        # ── Determine reply (off-topic override per DESIGN.md §8) ─────────
+        is_on_topic = response.get("is_on_topic", True)
+        if not is_on_topic:
+            reply_text = _redirect_copy(lang)
+            is_redirect = True
+        else:
+            reply_text = response.get("reply_to_user", "...")
+            is_redirect = False
+
+        # ── Add assistant message ─────────────────────────────────────────
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": reply_text,
+            "is_redirect": is_redirect,
+            "is_voice": False,
+        })
+        st.session_state.groq_history.append({
+            "role": "assistant",
+            "content": reply_text,
+        })
+
+        st.rerun()
