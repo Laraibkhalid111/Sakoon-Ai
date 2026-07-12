@@ -25,28 +25,22 @@ from prompts import (
 # Groq client — initialised lazily so import doesn't crash if key is missing
 # ---------------------------------------------------------------------------
 
-_client: Groq | None = None
-
-
 def _get_client() -> Groq:
-    """Return (or lazily create) the Groq client, checking .env first, then st.secrets."""
-    global _client
-    if _client is None:
-        import os
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
-        api_key = os.getenv("GROQ_API_KEY", "")
-        
-        if not api_key:
-            try:
-                api_key = st.secrets["GROQ_API_KEY"]
-            except (KeyError, FileNotFoundError):
-                pass
-                
-        if not api_key:
-            raise ValueError("GROQ_API_KEY is not set. Check .env or .streamlit/secrets.toml")
-        _client = Groq(api_key=api_key)
-    return _client
+    """Return a fresh Groq client, checking .env first, then st.secrets."""
+    import os
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+    api_key = os.getenv("GROQ_API_KEY", "")
+    
+    if not api_key:
+        try:
+            api_key = st.secrets["GROQ_API_KEY"]
+        except (KeyError, FileNotFoundError):
+            pass
+            
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is not set. Check .env or .streamlit/secrets.toml")
+    return Groq(api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
