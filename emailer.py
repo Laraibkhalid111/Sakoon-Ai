@@ -38,13 +38,16 @@ def send_email_report(
         True if sent successfully, False otherwise.
     """
     try:
-        sender_email = st.secrets.get("EMAIL_ADDRESS")
-        app_password = st.secrets.get("EMAIL_APP_PASSWORD")
-        smtp_host = st.secrets.get("SMTP_HOST", "smtp.gmail.com")
-        smtp_port_val = st.secrets.get("SMTP_PORT", 465)
+        import os
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        sender_email = os.getenv("EMAIL_ADDRESS") or st.secrets.get("EMAIL_ADDRESS")
+        app_password = os.getenv("EMAIL_APP_PASSWORD") or st.secrets.get("EMAIL_APP_PASSWORD")
+        smtp_host = os.getenv("SMTP_HOST") or st.secrets.get("SMTP_HOST", "smtp.gmail.com")
+        smtp_port_val = os.getenv("SMTP_PORT") or st.secrets.get("SMTP_PORT", 465)
         
         if not sender_email or not app_password:
-            logging.getLogger(__name__).error("SMTP credentials missing from st.secrets.")
+            logging.getLogger(__name__).error("SMTP credentials missing from environment or st.secrets.")
             return False
             
         smtp_port = int(smtp_port_val)

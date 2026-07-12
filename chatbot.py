@@ -29,19 +29,22 @@ _client: Groq | None = None
 
 
 def _get_client() -> Groq:
-    """Return (or lazily create) the Groq client, reading key from st.secrets."""
+    """Return (or lazily create) the Groq client, checking .env first, then st.secrets."""
     global _client
     if _client is None:
-        try:
-            api_key = st.secrets["GROQ_API_KEY"]
-        except (KeyError, FileNotFoundError):
-            # Fallback for local dev using python-dotenv / .env
-            import os
-            from dotenv import load_dotenv
-            load_dotenv()
-            api_key = os.getenv("GROQ_API_KEY", "")
+        import os
+        from dotenv import load_dotenv
+        load_dotenv(override=True)
+        api_key = os.getenv("GROQ_API_KEY", "")
+        
         if not api_key:
-            raise ValueError("GROQ_API_KEY is not set. Check .streamlit/secrets.toml or .env")
+            try:
+                api_key = st.secrets["GROQ_API_KEY"]
+            except (KeyError, FileNotFoundError):
+                pass
+                
+        if not api_key:
+            raise ValueError("GROQ_API_KEY is not set. Check .env or .streamlit/secrets.toml")
         _client = Groq(api_key=api_key)
     return _client
 
