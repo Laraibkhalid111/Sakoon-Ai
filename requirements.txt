@@ -1,0 +1,15 @@
+# Sakoon AI — Python dependencies
+# Free-tier stack only. No LangChain, no Docker, no paid services.
+# Pin to major.minor ranges so installs stay reproducible without locking patch noise.
+
+# Core Streamlit app shell
+streamlit>=1.38.0,<2.0.0          # st.audio_input requires >=1.38
+
+# Groq API (LLM chat + Whisper STT)
+groq>=0.9.0,<2.0.0
+
+# PDF report generation (pure Python, no system deps like wkhtmltopdf)
+fpdf2>=2.7.9,<3.0.0
+
+# Load .env for local scripts / fallback (Streamlit uses st.secrets natively)
+python-dotenv>=1.0.0,<2.0.0
