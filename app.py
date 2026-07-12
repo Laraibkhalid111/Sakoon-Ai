@@ -401,6 +401,7 @@ def _init_state():
         # Voice pipeline state
         "whisper_error": False,   # True when Whisper call fails
         "pending_voice_text": None,  # Transcript ready to inject as a message
+        "voice_recorder_key": 0,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -483,7 +484,7 @@ with st.sidebar:
         else:
             audio_val = st.audio_input(
                 label="Record your message",
-                key="voice_recorder",
+                key=f"voice_recorder_{st.session_state.voice_recorder_key}",
                 label_visibility="collapsed",
             )
 
@@ -500,9 +501,11 @@ with st.sidebar:
                 # Store transcript; main loop below will inject it as a message
                 st.session_state.pending_voice_text = transcript
                 st.session_state.whisper_error = False
+                st.session_state.voice_recorder_key += 1
                 st.rerun()  # collapses expander, injects message
             else:
                 st.session_state.whisper_error = True
+                st.session_state.voice_recorder_key += 1
                 st.rerun()
 
         # Failure banner inside expander (DESIGN.md §6.5)
