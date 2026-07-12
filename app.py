@@ -15,6 +15,7 @@ from database import (
     close_session, log_message, upsert_snapshot, get_recent_sessions,
 )
 from report import build_report, build_session_data
+from emailer import send_email_report
 
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -374,6 +375,8 @@ def _init_state():
         "db_error": False,        # True when a non-critical DB write fails
         "thinking": False,
         "report_bytes": None,
+        "last_session_data": None,
+        "last_narrative": None,
         # DB identifiers (populated after first message)
         "db_session_id": None,
         "db_user_id": None,
@@ -509,12 +512,37 @@ with st.sidebar:
 
         if pdf_bytes:
             st.session_state.report_bytes = pdf_bytes
-            success_msg = (
-                "رپورٹ تیار ہے! نیچے سے ڈاؤن لوڈ کریں۔"
-                if lang == "urdu" else
-                "Your report is ready! Download it below."
-            )
-            st.success(f"✅ {success_msg}")
+            st.session_state.last_session_data = session_data
+            st.session_state.last_narrative = narrative
+            
+            # Automatic email send if email address exists
+            email = session_data.get("email")
+            if email and email.strip():
+                with st.spinner("Sending wellness report email..." if lang != "urdu" else "ای میل بھیجی جا رہی ہے..."):
+                    sent_ok = send_email_report(
+                        recipient=email.strip(),
+                        pdf_bytes=pdf_bytes,
+                        filename="Sakoon_Wellness_Report.pdf",
+                        session_data=session_data,
+                        narrative=narrative
+                    )
+                if sent_ok:
+                    success_email_msg = (
+                        "رپورٹ تیار ہے اور آپ کی ای میل پر بھیج دی گئی ہے!"
+                        if lang == "urdu" else
+                        "Your report is ready and has been emailed to you!"
+                    )
+                    st.success(f"✅ {success_email_msg}")
+                else:
+                    warning_email_msg = ERROR_COPY["smtp_failure"]["ur" if lang == "urdu" else "en"]
+                    st.warning(f"⚠️ {warning_email_msg}")
+            else:
+                success_msg = (
+                    "رپورٹ تیار ہے! نیچے سے ڈاؤن لوڈ کریں۔"
+                    if lang == "urdu" else
+                    "Your report is ready! Download it below."
+                )
+                st.success(f"✅ {success_msg}")
         else:
             err_copy = ERROR_COPY["pdf_failure"]["ur" if lang == "urdu" else "en"]
             st.error(f"❌ {err_copy}")
@@ -530,9 +558,44 @@ with st.sidebar:
             key="btn_download",
         )
 
-    # Resend email button (M6 — placeholder)
+    # Resend email button (M6)
     if st.button("📧 Resend to Email", use_container_width=True, key="btn_email", type="secondary"):
-        st.info("Email delivery will be enabled in M6.")
+        lang = st.session_state.lang
+        email = st.session_state.profile.get("email")
+        
+        if not email or not email.strip():
+            no_email_msg = (
+                "ای میل ایڈریس موجود نہیں ہے۔ براہ کرم پہلے گفتگو میں اپنی ای میل شیئر کریں۔"
+                if lang == "urdu" else
+                "No email address is on file. Please share your email address in the chat first."
+            )
+            st.warning(f"⚠️ {no_email_msg}")
+        elif not st.session_state.report_bytes:
+            no_report_msg = (
+                "پہلے رپورٹ تیار کرنے کے لیے 'رپورٹ بنائیں' پر کلک کریں۔"
+                if lang == "urdu" else
+                "Please generate a report first by clicking 'Generate Report'."
+            )
+            st.warning(f"⚠️ {no_report_msg}")
+        else:
+            with st.spinner("Resending report email..." if lang != "urdu" else "ای میل دوبارہ بھیجی جا رہی ہے..."):
+                sent_ok = send_email_report(
+                    recipient=email.strip(),
+                    pdf_bytes=st.session_state.report_bytes,
+                    filename="Sakoon_Wellness_Report.pdf",
+                    session_data=st.session_state.get("last_session_data", build_session_data(st.session_state)),
+                    narrative=st.session_state.get("last_narrative", "")
+                )
+            if sent_ok:
+                success_email_msg = (
+                    "آپ کی رپورٹ ای میل کر دی گئی ہے۔"
+                    if lang == "urdu" else
+                    "Your report has been emailed to you."
+                )
+                st.success(f"✅ {success_email_msg}")
+            else:
+                warning_email_msg = ERROR_COPY["smtp_failure"]["ur" if lang == "urdu" else "en"]
+                st.warning(f"⚠️ {warning_email_msg}")
 
     # Crisis helpline — always visible once triggered
     if st.session_state.crisis_triggered:
