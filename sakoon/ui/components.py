@@ -208,16 +208,24 @@ def _render_message_actions(
                     st.rerun()
 
 
-def render_typing() -> None:
-    """Legacy typing dots (prefer render_thinking_bar as the single indicator)."""
-    st.markdown(
-        '<div class="sakoon-bubble-wrap assistant">'
-        '<div class="sakoon-avatar" aria-hidden="true">S</div>'
-        '<div class="sakoon-bubble assistant">'
-        '<div class="sakoon-typing"><span></span><span></span><span></span></div>'
-        "</div></div>",
-        unsafe_allow_html=True,
-    )
+def render_scroll_to_bottom() -> None:
+    """Lightweight jump-to-latest control for long chats."""
+    if st.button("↓ Latest", key="scroll_latest", help="Jump to latest message"):
+        components.html(
+            """
+            <script>
+            (function() {
+              const doc = window.parent.document;
+              const main = doc.querySelector('[data-testid="stAppViewContainer"]');
+              if (main) main.scrollTo({ top: main.scrollHeight, behavior: 'smooth' });
+              const body = doc.scrollingElement || doc.documentElement;
+              body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' });
+            })();
+            </script>
+            """,
+            height=0,
+            width=0,
+        )
 
 
 def render_thinking_bar(lang: str) -> None:

@@ -52,6 +52,15 @@ def test_copy_helper_no_onclick_in_bubble_module():
     assert "clipboard_write" in src
 
 
+def test_partial_reply_extract_from_stream_buffer():
+    from sakoon.services.chatbot import _extract_partial_reply
+
+    buf = '{"reply_to_user": "Hello there", "conversation_stage": "greeting"'
+    assert _extract_partial_reply(buf) == "Hello there"
+    partial = '{"reply_to_user": "Hi \\nfriend'
+    assert "Hi" in _extract_partial_reply(partial)
+
+
 def test_coping_copy_all_actions():
     for action in COPING_ACTIONS:
         en = get_coping_copy(action, "english")

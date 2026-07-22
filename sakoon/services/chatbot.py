@@ -2,8 +2,8 @@
 sakoon.services.chatbot — Groq LLM + Whisper wrapper.
 
 Public API:
-  get_ai_response(), generate_report_narrative(), transcribe_audio()
-  _validate_and_fix(), _parse_json_response()  (exported for tests)
+  get_ai_response(), stream_ai_response(), generate_report_narrative(),
+  transcribe_audio(), _validate_and_fix(), _parse_json_response()
 """
 
 from __future__ import annotations
@@ -127,6 +127,41 @@ def get_ai_response(
     Send (truncated) conversation history to Groq JSON mode and return a
     validated response dict. On failure returns _default_response with _error.
     """
+    final = None
+    for event in stream_ai_response(conversation_history, current_lang=current_lang):
+        if event.get("type") == "done":
+            final = event.get("response")
+    return final if final is not None else _default_response(current_lang)
+
+
+def _extract_partial_reply(buffer: str) -> str:
+    """Best-effort extract of reply_to_user while JSON is still streaming."""
+    match = re.search(r'"reply_to_user"\s*:\s*"((?:\\.|[^"\\])*)', buffer)
+    if not match:
+        return ""
+    raw = match.group(1)
+    try:
+        return json.loads(f'"{raw}"')
+    except json.JSONDecodeError:
+        # Incomplete escape at the tail — drop trailing backslash fragments
+        trimmed = raw
+        while trimmed.endswith("\\"):
+            trimmed = trimmed[:-1]
+        try:
+            return json.loads(f'"{trimmed}"')
+        except json.JSONDecodeError:
+            return trimmed.replace('\\"', '"').replace("\\n", "\n")
+
+
+def stream_ai_response(
+    conversation_history: list[dict],
+    current_lang: str = "english",
+):
+    """
+    Stream Groq JSON completion. Yields:
+      {"type": "delta", "text": "<full reply so far>"}
+      {"type": "done", "response": <validated dict>}
+    """
     settings = get_settings()
     history = truncate_history(conversation_history, settings.max_history_messages)
     if len(conversation_history) > len(history):
@@ -141,25 +176,42 @@ def get_ai_response(
         *history,
     ]
 
+    buffer = ""
+    last_shown = ""
     try:
         client = _get_client()
-        completion = client.chat.completions.create(
+        stream = client.chat.completions.create(
             model=settings.chat_model,
             messages=messages,
             response_format={"type": "json_object"},
             temperature=0.7,
             max_tokens=1024,
+            stream=True,
         )
-        raw = completion.choices[0].message.content or ""
-        data = _parse_json_response(raw)
+        for chunk in stream:
+            delta = ""
+            try:
+                delta = chunk.choices[0].delta.content or ""
+            except (AttributeError, IndexError):
+                delta = ""
+            if not delta:
+                continue
+            buffer += delta
+            partial = _extract_partial_reply(buffer)
+            if partial and partial != last_shown:
+                last_shown = partial
+                yield {"type": "delta", "text": partial}
+
+        data = _parse_json_response(buffer)
         if data is None:
-            log.error("Groq returned unparseable JSON (len=%s)", len(raw))
-            return _default_response(current_lang)
-        return _validate_and_fix(data)
+            log.error("Groq stream returned unparseable JSON (len=%s)", len(buffer))
+            yield {"type": "done", "response": _default_response(current_lang)}
+            return
+        yield {"type": "done", "response": _validate_and_fix(data)}
 
     except Exception as exc:
-        log.error("get_ai_response failed: %s", type(exc).__name__)
-        return _default_response(current_lang)
+        log.error("stream_ai_response failed: %s", type(exc).__name__)
+        yield {"type": "done", "response": _default_response(current_lang)}
 
 
 def generate_report_narrative(session_data: dict) -> str:

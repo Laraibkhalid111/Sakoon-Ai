@@ -14,7 +14,7 @@ from sakoon.core.rate_limit import allow_chat
 from sakoon.core.metrics import emit
 from sakoon.core.health import check_health
 from sakoon.services.prompts import WELCOME_MESSAGE, ERROR_COPY
-from sakoon.services.chatbot import get_ai_response, transcribe_audio, generate_report_narrative
+from sakoon.services.chatbot import stream_ai_response, transcribe_audio, generate_report_narrative
 from sakoon.services.safety import check_crisis
 from sakoon.db import (
     init_db, update_user, create_session, update_session,
@@ -26,7 +26,7 @@ from sakoon.services.emailer import send_email_report
 from sakoon.ui.components import (
     inject_styles, crisis_copy, render_bubble, render_thinking_bar,
     mood_pill_html, lang_badge_html, banner, redirect_copy, timestamp_now,
-    render_brand_header,
+    render_brand_header, render_scroll_to_bottom,
 )
 from sakoon.ui.coping import render_coping_panel, start_coping, COPING_ACTIONS
 from sakoon.ui.session_ops import start_new_chat, load_past_session
@@ -39,8 +39,8 @@ log = get_logger(__name__)
 
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Sakoon AI — Mental Wellness Companion",
-    page_icon="🫶",
+    page_title="Sakoon AI",
+    page_icon="🌊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -186,53 +186,45 @@ with st.sidebar:
 
     st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
 
-    # ── Voice Input (DESIGN.md §6.5) ────────────────────────────────────────
-    with st.expander("🎙️ Voice Input", expanded=False):
-        lang = st.session_state.lang
-        idle_copy = (
-            "بغور سن رہے ہیں..." if lang == "urdu" else "Tap to record. Speak in Urdu or English."
+    # ── Voice (always visible — speak in Urdu or English) ───────────────────
+    st.markdown(
+        '<div class="sakoon-voice-card"><h4>Voice</h4>'
+        '<p class="sakoon-ts" style="margin:0">Speak in Urdu or English — Whisper handles the rest.</p></div>',
+        unsafe_allow_html=True,
+    )
+    lang = st.session_state.lang
+    if st.session_state.thinking:
+        st.caption("Voice pauses while Sakoon is replying…")
+        audio_val = None
+    else:
+        audio_val = st.audio_input(
+            label="Record your message",
+            key=f"voice_recorder_{st.session_state.voice_recorder_key}",
+            label_visibility="collapsed",
         )
-        st.caption(idle_copy)
 
-        if st.session_state.thinking:
-            st.info("Listening is disabled while thinking..." if lang != "urdu" else "پیغام کے دوران آواز ریکارڈنگ بند ہے۔")
-            audio_val = None
+    if audio_val is not None:
+        audio_bytes = audio_val.read()
+        with st.spinner("Transcribing…" if lang != "urdu" else "لکھا جا رہا ہے…"):
+            transcript = transcribe_audio(audio_bytes, filename="voice.wav")
+
+        if transcript:
+            st.session_state.pending_voice_text = transcript
+            st.session_state.whisper_error = False
+            st.session_state.voice_recorder_key += 1
+            st.rerun()
         else:
-            audio_val = st.audio_input(
-                label="Record your message",
-                key=f"voice_recorder_{st.session_state.voice_recorder_key}",
-                label_visibility="collapsed",
-            )
+            st.session_state.whisper_error = True
+            st.session_state.voice_recorder_key += 1
+            st.rerun()
 
-        if audio_val is not None:
-            audio_bytes = audio_val.read()
-            spinner_copy = (
-                "بغور سن رہے ہیں..." if lang == "urdu" else "Listening carefully..."
-            )
-            with st.spinner(spinner_copy):
-                transcript = transcribe_audio(audio_bytes, filename="voice.wav")
-
-            if transcript:
-                st.session_state.pending_voice_text = transcript
-                st.session_state.whisper_error = False
-                st.session_state.voice_recorder_key += 1
-                st.rerun()
-            else:
-                st.session_state.whisper_error = True
-                st.session_state.voice_recorder_key += 1
-                st.rerun()
-
-        if st.session_state.whisper_error:
-            fail_copy = (
-                ERROR_COPY["whisper_failure"]["ur"]
-                if lang == "urdu"
-                else ERROR_COPY["whisper_failure"]["en"]
-            )
-            st.markdown(
-                f'<div class="sakoon-banner warning" style="margin-top:8px">'
-                f'⚠️ {escape_html(fail_copy)}</div>',
-                unsafe_allow_html=True,
-            )
+    if st.session_state.whisper_error:
+        fail_copy = (
+            ERROR_COPY["whisper_failure"]["ur"]
+            if lang == "urdu"
+            else ERROR_COPY["whisper_failure"]["en"]
+        )
+        banner("warning", f"⚠️ {fail_copy}")
 
     st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
 
@@ -493,6 +485,8 @@ for idx, msg in enumerate(st.session_state.messages):
         avatar_label="S" if msg["role"] == "assistant" else _user_avatar,
     )
 
+render_scroll_to_bottom()
+
 # ── Chat input handling ───────────────────────────────────────────────────────
 
 # Placeholder swaps to 'Sakoon is thinking...' while disabled — DESIGN.md §6.4
@@ -533,11 +527,35 @@ def _queue_regenerate() -> bool:
 
 
 def _process_ai_turn(raw: str, is_voice: bool) -> None:
-    """Call Groq and persist the assistant reply for a queued user turn."""
-    response = get_ai_response(
+    """Stream Groq reply into the UI, then persist the final assistant turn."""
+    stream_box = st.empty()
+    response = None
+    live_text = ""
+
+    for event in stream_ai_response(
         st.session_state.groq_history,
         current_lang=st.session_state.lang,
-    )
+    ):
+        if event.get("type") == "delta":
+            live_text = event.get("text") or ""
+            with stream_box.container():
+                render_bubble(
+                    role="assistant",
+                    text=live_text + " ▍",
+                    msg_index=99999,
+                    enable_markdown=True,
+                    show_actions=False,
+                    avatar_label="S",
+                )
+        elif event.get("type") == "done":
+            response = event.get("response")
+
+    stream_box.empty()
+    if not isinstance(response, dict):
+        from sakoon.services.chatbot import _default_response
+        response = _default_response(st.session_state.lang)
+        if live_text:
+            response["reply_to_user"] = live_text
 
     # ── Handle error ──────────────────────────────────────────────────
     if response.get("_error"):

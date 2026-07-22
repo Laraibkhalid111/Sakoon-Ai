@@ -65,10 +65,11 @@ Post–Phase 6 visual/UX pass on Streamlit (no rewrite):
 - Premium bubbles (avatars, timestamps, voice badge, Regen)
 - Wellness + Insights surface polish
 
-### Deferred (out of Scope A)
+### Deferred (out of Scope A) — partly landed later
 
-- Token streaming / stop generation / message edit
-- File upload, drag-and-drop, TTS
+- Token streaming of `reply_to_user` while JSON completes — **shipped** (live bubble)
+- Always-on voice input card — **shipped**
+- Stop generation / message edit / file upload / TTS — still deferred
 - Habits, goals, achievements, meditation library expansion
 - React/Next.js rewrite or SPA Lighthouse claims
 

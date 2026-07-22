@@ -7,8 +7,8 @@ import streamlit as st
 from sakoon.core.security import escape_html
 from sakoon.services.insights import collect_insights, insights_ui_copy
 
-_CHART_PRIMARY = "#3D7A6F"
-_CHART_SECONDARY = "#7FA994"
+_CHART_PRIMARY = "#0D9488"
+_CHART_SECONDARY = "#38BDF8"
 
 
 def render_insights_page(lang: str) -> None:
