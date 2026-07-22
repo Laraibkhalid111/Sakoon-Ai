@@ -1,12 +1,16 @@
-"""Session history helpers for sidebar load / new chat / auth bootstrap."""
+"""Session history helpers — local device profile (no login)."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import streamlit as st
 
-from sakoon.db import create_session, get_messages, get_snapshot, session_belongs_to_user
+from sakoon.db import (
+    create_session,
+    get_messages,
+    get_or_create_local_user,
+    get_snapshot,
+    session_belongs_to_user,
+)
 from sakoon.services.prompts import WELCOME_MESSAGE
 from sakoon.ui.components import timestamp_now
 
@@ -36,28 +40,44 @@ def _inject_welcome() -> None:
     }]
 
 
+def ensure_local_identity(preferred_language: str = "english") -> int | None:
+    """
+    Bind Streamlit session to the local device user (no accounts).
+    Returns user id or None if DB unavailable.
+    """
+    if st.session_state.get("db_user_id"):
+        return int(st.session_state.db_user_id)
+
+    uid = get_or_create_local_user(preferred_language=preferred_language)
+    if uid is None:
+        return None
+    st.session_state.db_user_id = int(uid)
+    st.session_state.local_mode = True
+    return int(uid)
+
+
 def start_new_chat() -> None:
-    """Reset chat state and open a fresh DB session for the signed-in user."""
+    """Reset chat state and open a fresh DB session for the local user."""
     prev_voice_key = int(st.session_state.get("voice_recorder_key", 0) or 0)
     theme = st.session_state.get("theme", "light")
     user_id = st.session_state.get("db_user_id")
-    username = st.session_state.get("auth_username")
-    authenticated = bool(st.session_state.get("authenticated"))
+    # Preserve language preference across new chats
+    lang = st.session_state.get("lang") or "english"
+    detected = st.session_state.get("detected_lang") or lang
 
     for key in _CHAT_KEYS:
         if key in st.session_state:
             del st.session_state[key]
 
     st.session_state.theme = theme
-    st.session_state.authenticated = authenticated
     st.session_state.db_user_id = user_id
-    st.session_state.auth_username = username
+    st.session_state.local_mode = True
     st.session_state.messages = []
     st.session_state.groq_history = []
     st.session_state.profile = {**WELCOME_MESSAGE["extracted"], "coping_suggestions": []}
     st.session_state.stage = "greeting"
-    st.session_state.lang = "english"
-    st.session_state.detected_lang = "english"
+    st.session_state.lang = lang
+    st.session_state.detected_lang = detected
     st.session_state.mood = None
     st.session_state.crisis_triggered = False
     st.session_state.show_error = None
@@ -87,32 +107,8 @@ def start_new_chat() -> None:
         st.session_state.db_session_id = sid
 
 
-def bootstrap_authenticated_session(user: dict[str, Any]) -> None:
-    """Called after successful login/register — bind identity and start a chat."""
-    st.session_state.authenticated = True
-    st.session_state.db_user_id = int(user["id"])
-    st.session_state.auth_username = user.get("username")
-    if user.get("preferred_language"):
-        st.session_state.lang = user["preferred_language"]
-        st.session_state.detected_lang = user["preferred_language"]
-    start_new_chat()
-
-
-def logout_user() -> None:
-    """Clear auth + chat state; keep theme preference."""
-    theme = st.session_state.get("theme", "light")
-    for key in list(st.session_state.keys()):
-        if key in ("theme", "lang_override_select", "theme_toggle"):
-            continue
-        del st.session_state[key]
-    st.session_state.theme = theme
-    st.session_state.authenticated = False
-    st.session_state.db_user_id = None
-    st.session_state.auth_username = None
-
-
 def load_past_session(session_id: int) -> bool:
-    """Load messages from a past session owned by the current user."""
+    """Load messages from a past session owned by the local user."""
     uid = st.session_state.get("db_user_id")
     if uid is None or not session_belongs_to_user(session_id, int(uid)):
         return False

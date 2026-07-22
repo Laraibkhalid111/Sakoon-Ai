@@ -29,10 +29,10 @@ from sakoon.ui.components import (
     render_brand_header, render_scroll_to_bottom,
 )
 from sakoon.ui.coping import render_coping_panel, start_coping, COPING_ACTIONS
-from sakoon.ui.session_ops import start_new_chat, load_past_session
+from sakoon.ui.session_ops import start_new_chat, load_past_session, ensure_local_identity
 from sakoon.ui.wellness import render_wellness_nav, render_wellness_page
 from sakoon.ui.insights import render_insights_page
-from sakoon.ui.auth import render_auth_gate, render_account_sidebar
+from sakoon.ui.auth import render_local_sidebar_note
 
 setup_logging(get_settings().log_level)
 log = get_logger(__name__)
@@ -79,8 +79,7 @@ def _init_state():
         "journal_draft": "",
         "history_readonly": False,
         "main_view": "chat",
-        "authenticated": False,
-        "auth_username": None,
+        "local_mode": True,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -105,18 +104,17 @@ def _init_state():
 _init_state()
 inject_styles(st.session_state.get("theme", "light"))
 
-# ── DB init ───────────────────────────────────────────────────────────────────
+# ── DB init + local identity (no login) ───────────────────────────────────────
 _db_ok = init_db()
 if _db_ok and not st.session_state.get("_health_logged"):
     health = check_health()
     emit("app_ready", ok=health.get("ok"), has_groq=health.get("settings", {}).get("has_groq"))
     st.session_state._health_logged = True
 
-# ── Auth gate (Phase 5) — must sign in before using the app ───────────────────
-if not render_auth_gate(st.session_state.get("lang", "english")):
-    st.stop()
+if _db_ok:
+    ensure_local_identity(preferred_language=st.session_state.get("lang", "english"))
 
-# Session for signed-in user
+# Session for local user
 if _db_ok and st.session_state.db_session_id is None:
     sid = create_session(user_id=st.session_state.get("db_user_id"))
     if sid:
@@ -135,7 +133,7 @@ else:
 
 with st.sidebar:
     render_brand_header(st.session_state.lang)
-    render_account_sidebar()
+    render_local_sidebar_note()
 
     # Theme + new chat
     theme_cols = st.columns(2)
@@ -455,7 +453,7 @@ if st.session_state.thinking:
     render_thinking_bar(st.session_state.lang)
 
 def _avatar_initials() -> str:
-    name = (st.session_state.get("auth_username") or st.session_state.profile.get("name") or "You").strip()
+    name = (st.session_state.profile.get("name") or "You").strip()
     parts = name.replace("_", " ").split()
     if len(parts) >= 2:
         return (parts[0][0] + parts[1][0]).upper()
@@ -777,7 +775,7 @@ if raw_input:
 
     else:
         # Rate-limit Groq path only (crisis replies always allowed)
-        user_key = str(st.session_state.get("db_user_id") or st.session_state.get("auth_username") or "anon")
+        user_key = str(st.session_state.get("db_user_id") or "local")
         rl = allow_chat(user_key)
         if not rl.allowed:
             emit("rate_limited_chat", user_id=st.session_state.get("db_user_id"), retry=round(rl.retry_after_sec, 1))

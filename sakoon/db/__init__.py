@@ -4,6 +4,7 @@ from sakoon.db.database import (  # noqa: F401
     init_db,
     upsert_user,
     update_user,
+    get_or_create_local_user,
     create_auth_user,
     get_user_by_username,
     get_user_by_id,

@@ -53,8 +53,16 @@ Phase 1 moves code; it does not change behaviour.
 | **2 — Premium chat UI** | Modern theme (light/dark), markdown replies, copy, smoother thinking states, session history sidebar, coping/breathing UI | **Done** — theme toggle, safe markdown, copy, loadable history, coping panel |
 | **3 — Wellness core** | Mood log, journal, guided breathing, affirmations, emergency resources (fully wired, not placeholders) | **Done** — wellness room + persistent mood/journal tables |
 | **4 — Insights** | Mood trends, streaks, weekly summary charts (Plotly/Altair in Streamlit) | **Done** — Insights view with Altair charts, streaks, weekly narrative |
-| **5 — Multi-user** | Auth (Streamlit gate + bcrypt), per-user data isolation, optional Fernet journal encryption | **Done** — login/register gate; user-scoped sessions/mood/journal/insights; `ENCRYPTION_KEY` |
+| **5 — Multi-user** | Auth (Streamlit gate + bcrypt), per-user data isolation, optional Fernet journal encryption | **Superseded** — auth gate removed (P0); local device profile + SQLite only |
 | **6 — Ops** | Docker, healthcheck, CI, backups, rate limits, monitoring | **Done** — Dockerfile/compose, GH Actions CI, SQLite backups, chat/auth rate limits, health + metrics logs |
+
+## Product decision — No authentication (P0)
+
+Sakoon opens **directly into the experience**. There is no login, signup, or password reset.
+
+- Identity = one local SQLite user (`username=__local__`) on this device
+- Chats, mood, and journal stay on-device via `sakoon.db`
+- Account UI / auth gate code paths are retired from the product surface
 
 ## Premium UI polish (Scope A) — Done
 

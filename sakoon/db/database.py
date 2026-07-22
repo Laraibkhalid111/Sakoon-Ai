@@ -183,6 +183,35 @@ def upsert_user(name: str | None, email: str | None, phone: str | None,
         return None
 
 
+# Stable local device profile (no accounts / passwords)
+_LOCAL_USERNAME = "__local__"
+_LOCAL_NAME = "Local"
+
+
+def get_or_create_local_user(preferred_language: str = "english") -> int | None:
+    """
+    Return the single local device user id used when auth is disabled.
+    Identified by username=__local__ so contact email updates never lose the row.
+    """
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM users WHERE username = ? LIMIT 1",
+                (_LOCAL_USERNAME,),
+            ).fetchone()
+            if row:
+                return int(row["id"])
+            cur = conn.execute(
+                """INSERT INTO users (username, password_hash, name, email, phone, preferred_language)
+                   VALUES (?, NULL, ?, NULL, NULL, ?)""",
+                (_LOCAL_USERNAME, _LOCAL_NAME, preferred_language),
+            )
+            return cur.lastrowid
+    except Exception as e:
+        log.error("get_or_create_local_user failed: %s", e)
+        return None
+
+
 def update_user(user_id: int, name: str | None = None, email: str | None = None,
                 phone: str | None = None, preferred_language: str | None = None) -> bool:
     """Update non-null fields on an existing user row."""
