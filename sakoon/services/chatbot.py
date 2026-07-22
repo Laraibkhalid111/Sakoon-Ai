@@ -153,6 +153,14 @@ def _extract_partial_reply(buffer: str) -> str:
             return trimmed.replace('\\"', '"').replace("\\n", "\n")
 
 
+def _extract_is_on_topic(buffer: str) -> bool | None:
+    """Return False/True when is_on_topic is present in the partial JSON buffer."""
+    match = re.search(r'"is_on_topic"\s*:\s*(true|false)', buffer, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(1).lower() == "true"
+
+
 def stream_ai_response(
     conversation_history: list[dict],
     current_lang: str = "english",
@@ -197,6 +205,13 @@ def stream_ai_response(
             if not delta:
                 continue
             buffer += delta
+            # Avoid flashing off-topic model text that will be replaced by redirect copy
+            topic = _extract_is_on_topic(buffer)
+            if topic is False:
+                if last_shown != "…":
+                    last_shown = "…"
+                    yield {"type": "delta", "text": "…"}
+                continue
             partial = _extract_partial_reply(buffer)
             if partial and partial != last_shown:
                 last_shown = partial

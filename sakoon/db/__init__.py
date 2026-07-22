@@ -14,6 +14,7 @@ from sakoon.db.database import (  # noqa: F401
     close_session,
     log_message,
     get_messages,
+    delete_last_assistant_message,
     upsert_snapshot,
     get_snapshot,
     get_recent_sessions,

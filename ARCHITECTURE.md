@@ -77,9 +77,9 @@ Post–Phase 6 visual/UX pass on Streamlit (no rewrite):
 
 - Token streaming of `reply_to_user` while JSON completes — **shipped** (live bubble)
 - Always-on voice input card — **shipped**
+- Auth gate removed (P0) — local device profile
+- Chat reliability (P1) — iframe Copy, regen deletes DB row, off-topic stream suppress, rate-limit isolation
 - Stop generation / message edit / file upload / TTS — still deferred
-- Habits, goals, achievements, meditation library expansion
-- React/Next.js rewrite or SPA Lighthouse claims
 
 ## Explicit non-goals for Phases 0–2
 

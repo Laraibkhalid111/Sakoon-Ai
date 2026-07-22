@@ -81,7 +81,7 @@ def crisis_copy(lang: str) -> tuple[str, str]:
 
 
 def clipboard_write(text: str) -> None:
-    """Copy text via iframe JS (Streamlit markdown cannot run onclick handlers)."""
+    """Legacy auto-copy helper (unreliable after Streamlit rerun — prefer render_copy_button)."""
     payload = base64.b64encode((text or "").encode("utf-8")).decode("ascii")
     components.html(
         f"""
@@ -98,6 +98,45 @@ def clipboard_write(text: str) -> None:
         """,
         height=0,
         width=0,
+    )
+
+
+def render_copy_button(text: str, key: str) -> None:
+    """
+    Copy control that keeps the user gesture: real <button> inside components.html.
+    (st.button + post-rerun clipboard write usually fails silently.)
+    """
+    payload = base64.b64encode((text or "").encode("utf-8")).decode("ascii")
+    safe_key = escape_html(key)
+    components.html(
+        f"""
+        <button id="sakoon-copy-{safe_key}" type="button"
+          style="font-family:Outfit,system-ui,sans-serif;font-size:12px;font-weight:600;
+                 color:#0F766E;background:#CCFBF1;border:1px solid #99F6E4;
+                 border-radius:10px;padding:4px 10px;cursor:pointer;">
+          Copy
+        </button>
+        <script>
+        (function() {{
+          const btn = document.getElementById("sakoon-copy-{safe_key}");
+          if (!btn) return;
+          btn.addEventListener("click", async function() {{
+            try {{
+              const raw = atob("{payload}");
+              const bytes = Uint8Array.from(raw, function(c) {{ return c.charCodeAt(0); }});
+              const text = new TextDecoder("utf-8").decode(bytes);
+              await navigator.clipboard.writeText(text);
+              btn.textContent = "Copied";
+              setTimeout(function() {{ btn.textContent = "Copy"; }}, 1200);
+            }} catch (e) {{
+              btn.textContent = "Failed";
+              setTimeout(function() {{ btn.textContent = "Copy"; }}, 1200);
+            }}
+          }});
+        }})();
+        </script>
+        """,
+        height=36,
     )
 
 
@@ -177,13 +216,11 @@ def _render_message_actions(
     align_end: bool = False,
     show_regenerate: bool = False,
 ) -> None:
-    """Timestamp + Copy (+ optional Regenerate) using native widgets."""
+    """Timestamp + Copy (+ optional Regenerate)."""
     if align_end:
         cols = st.columns([1, 1, 4])
         with cols[0]:
-            if st.button("Copy", key=f"copy_{key_prefix}", help="Copy message"):
-                clipboard_write(text)
-                st.toast("Copied")
+            render_copy_button(text, key=f"u_{key_prefix}")
         with cols[2]:
             st.markdown(
                 f'<div class="sakoon-meta-row" style="justify-content:flex-end">'
@@ -198,9 +235,7 @@ def _render_message_actions(
                 unsafe_allow_html=True,
             )
         with cols[1]:
-            if st.button("Copy", key=f"copy_{key_prefix}", help="Copy message"):
-                clipboard_write(text)
-                st.toast("Copied")
+            render_copy_button(text, key=f"a_{key_prefix}")
         if show_regenerate:
             with cols[2]:
                 if st.button("Regen", key=f"regen_{key_prefix}", help="Regenerate reply"):

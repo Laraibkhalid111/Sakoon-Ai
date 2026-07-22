@@ -386,6 +386,25 @@ def log_message(session_id: int, role: str, content: str,
         return None
 
 
+def delete_last_assistant_message(session_id: int) -> bool:
+    """Remove the latest assistant message for a session (used by regenerate)."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                """SELECT id FROM messages
+                   WHERE session_id = ? AND role = 'assistant'
+                   ORDER BY id DESC LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+            if not row:
+                return True
+            conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+            return True
+    except Exception as e:
+        log.error("delete_last_assistant_message failed: %s", e)
+        return False
+
+
 def get_messages(session_id: int) -> list[dict]:
     """Return all messages for a session as a list of dicts."""
     try:

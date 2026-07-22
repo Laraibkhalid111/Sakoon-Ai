@@ -41,3 +41,19 @@ def test_local_sessions_scoped(tmp_path, monkeypatch):
     assert db.session_belongs_to_user(sid, uid) is True
     recent = db.get_recent_sessions(limit=5, user_id=uid)
     assert any(r["id"] == sid for r in recent)
+
+
+def test_delete_last_assistant_message(tmp_path, monkeypatch):
+    import sakoon.db.database as db
+
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "regen.db")
+    assert db.init_db() is True
+    sid = db.create_session(db.get_or_create_local_user())
+    db.log_message(sid, "user", "hello")
+    db.log_message(sid, "assistant", "first")
+    db.log_message(sid, "assistant", "second")
+    assert db.delete_last_assistant_message(sid) is True
+    rows = db.get_messages(sid)
+    assert len(rows) == 2
+    assert rows[-1]["content"] == "first"
+    assert rows[-1]["role"] == "assistant"

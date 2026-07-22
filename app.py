@@ -19,7 +19,7 @@ from sakoon.services.safety import check_crisis
 from sakoon.db import (
     init_db, update_user, create_session, update_session,
     close_session, log_message, upsert_snapshot, get_recent_sessions,
-    add_mood_log,
+    add_mood_log, delete_last_assistant_message,
 )
 from sakoon.services.report import build_report, build_session_data
 from sakoon.services.emailer import send_email_report
@@ -448,10 +448,6 @@ if st.session_state.db_error:
     banner("warning", f"⚠️ {msg}")
     st.session_state.db_error = False
 
-# Smoother thinking status
-if st.session_state.thinking:
-    render_thinking_bar(st.session_state.lang)
-
 def _avatar_initials() -> str:
     name = (st.session_state.profile.get("name") or "You").strip()
     parts = name.replace("_", " ").split()
@@ -503,7 +499,7 @@ user_input = st.chat_input(placeholder_text, disabled=st.session_state.thinking)
 
 
 def _queue_regenerate() -> bool:
-    """Drop last assistant reply and re-queue the preceding user turn (no duplicate user msg)."""
+    """Drop last assistant reply (memory + DB) and re-queue the preceding user turn."""
     msgs = st.session_state.messages
     if len(msgs) < 2 or msgs[-1].get("role") != "assistant":
         return False
@@ -511,6 +507,10 @@ def _queue_regenerate() -> bool:
     hist = st.session_state.groq_history
     if hist and hist[-1].get("role") == "assistant":
         hist.pop()
+    sid = st.session_state.get("db_session_id")
+    if sid:
+        if not delete_last_assistant_message(int(sid)):
+            st.session_state.db_error = True
     last_user = next((m for m in reversed(msgs) if m.get("role") == "user"), None)
     if not last_user:
         return False
@@ -530,6 +530,9 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
     response = None
     live_text = ""
 
+    with stream_box.container():
+        render_thinking_bar(st.session_state.lang)
+
     for event in stream_ai_response(
         st.session_state.groq_history,
         current_lang=st.session_state.lang,
@@ -539,7 +542,7 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
             with stream_box.container():
                 render_bubble(
                     role="assistant",
-                    text=live_text + " ▍",
+                    text=live_text + (" ▍" if live_text != "…" else ""),
                     msg_index=99999,
                     enable_markdown=True,
                     show_actions=False,
@@ -548,11 +551,10 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
         elif event.get("type") == "done":
             response = event.get("response")
 
-    stream_box.empty()
     if not isinstance(response, dict):
         from sakoon.services.chatbot import _default_response
         response = _default_response(st.session_state.lang)
-        if live_text:
+        if live_text and live_text != "…":
             response["reply_to_user"] = live_text
 
     # ── Handle error ──────────────────────────────────────────────────
@@ -655,6 +657,18 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
     else:
         reply_text = response.get("reply_to_user", "...")
         is_redirect = False
+
+    # Show final text in the live slot (avoids empty flash before rerun)
+    with stream_box.container():
+        render_bubble(
+            role="assistant",
+            text=reply_text,
+            is_redirect=is_redirect,
+            msg_index=99999,
+            enable_markdown=not is_redirect,
+            show_actions=False,
+            avatar_label="S",
+        )
 
     st.session_state.messages.append({
         "role": "assistant",
@@ -785,14 +799,16 @@ if raw_input:
                 if st.session_state.lang != "urdu"
                 else f"آپ تھوڑے تیزی سے پیغام بھیج رہے ہیں۔ براہِ کرم تقریباً {wait_s} سیکنڈ انتظار کریں۔"
             )
+            # Keep user text in the UI, but do not pollute Groq context or DB
+            if st.session_state.groq_history and st.session_state.groq_history[-1].get("role") == "user":
+                st.session_state.groq_history.pop()
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": slow_msg,
-                "is_redirect": False,
+                "is_redirect": True,
                 "is_voice": False,
                 "ts": timestamp_now(),
             })
-            st.session_state.groq_history.append({"role": "assistant", "content": slow_msg})
             st.rerun()
 
         emit("chat_turn_queued", user_id=st.session_state.get("db_user_id"), voice=_is_voice_turn)

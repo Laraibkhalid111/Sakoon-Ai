@@ -53,12 +53,24 @@ def test_copy_helper_no_onclick_in_bubble_module():
 
 
 def test_partial_reply_extract_from_stream_buffer():
-    from sakoon.services.chatbot import _extract_partial_reply
+    from sakoon.services.chatbot import _extract_partial_reply, _extract_is_on_topic
 
     buf = '{"reply_to_user": "Hello there", "conversation_stage": "greeting"'
     assert _extract_partial_reply(buf) == "Hello there"
     partial = '{"reply_to_user": "Hi \\nfriend'
     assert "Hi" in _extract_partial_reply(partial)
+    assert _extract_is_on_topic('{"is_on_topic": false, "reply_to_user": "x"') is False
+    assert _extract_is_on_topic('{"is_on_topic": true') is True
+    assert _extract_is_on_topic('{"reply_to_user": "x"') is None
+
+
+def test_copy_uses_iframe_button_not_st_button_clipboard():
+    import inspect
+    from sakoon.ui import components as c
+
+    src = inspect.getsource(c.render_copy_button)
+    assert "navigator.clipboard.writeText" in src
+    assert "addEventListener" in src
 
 
 def test_coping_copy_all_actions():
