@@ -56,6 +56,22 @@ Phase 1 moves code; it does not change behaviour.
 | **5 — Multi-user** | Auth (Streamlit gate + bcrypt), per-user data isolation, optional Fernet journal encryption | **Done** — login/register gate; user-scoped sessions/mood/journal/insights; `ENCRYPTION_KEY` |
 | **6 — Ops** | Docker, healthcheck, CI, backups, rate limits, monitoring | **Done** — Dockerfile/compose, GH Actions CI, SQLite backups, chat/auth rate limits, health + metrics logs |
 
+## Premium UI polish (Scope A) — Done
+
+Post–Phase 6 visual/UX pass on Streamlit (no rewrite):
+
+- Fixed chat Copy leaking `onclick`/raw HTML (native `st.button` + clipboard iframe)
+- Calm design system (sage/teal tokens, Fraunces + Plus Jakarta Sans, glass sidebar)
+- Premium bubbles (avatars, timestamps, voice badge, Regen)
+- Wellness + Insights surface polish
+
+### Deferred (out of Scope A)
+
+- Token streaming / stop generation / message edit
+- File upload, drag-and-drop, TTS
+- Habits, goals, achievements, meditation library expansion
+- React/Next.js rewrite or SPA Lighthouse claims
+
 ## Explicit non-goals for Phases 0–2
 
 - Full therapist/coaching mode suite as vapourware panels
