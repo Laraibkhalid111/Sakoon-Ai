@@ -148,6 +148,13 @@ section.main .block-container {
   max-width: var(--chat-max);
   padding-top: 1.25rem;
   padding-bottom: 7rem;
+  transition: max-width .2s ease;
+}
+/* Chat-first Claude column vs wider wellness/insights rooms */
+.stApp.sakoon-view-chat section.main .block-container { max-width: var(--chat-max); }
+.stApp.sakoon-view-wellness section.main .block-container,
+.stApp.sakoon-view-insights section.main .block-container {
+  max-width: min(960px, 94vw);
 }
 
 [data-testid="stChatInput"] { max-width: var(--chat-max); margin: 0 auto; }
@@ -344,13 +351,24 @@ div[data-testid="stHorizontalBlock"] .stButton > button {
 }
 .sakoon-brand-tag { font-size: 12.5px; color: var(--muted); margin: 2px 0 16px; }
 
-.sakoon-auth-shell {
-  max-width: 420px; margin: 2.5rem auto 1rem;
-  padding: 1.75rem 1.5rem 1.25rem;
-  background: var(--surface); backdrop-filter: blur(18px);
-  border: 1px solid var(--border); border-radius: 24px; box-shadow: var(--shadow);
+.sakoon-chat-intro {
+  text-align: center; margin: 0.35rem auto 1.25rem; max-width: 28rem;
 }
-.sakoon-auth-shell h3 { font-family: var(--display); font-weight: 700; letter-spacing: -.02em; }
+.sakoon-chat-eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--muted); margin: 0 0 .35rem;
+}
+.sakoon-chat-hint {
+  margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--muted);
+}
+
+.sakoon-copy-btn {
+  font-family: var(--font) !important; font-size: 12px !important; font-weight: 600 !important;
+  color: var(--primary-deep) !important; background: var(--primary-soft) !important;
+  border: 1px solid var(--border) !important; border-radius: 10px !important;
+  padding: 4px 10px !important; cursor: pointer !important;
+}
+.sakoon-copy-btn:hover { filter: brightness(0.97); }
 
 .sakoon-panel, .sakoon-coping-card, .sakoon-history-card, .sakoon-resource-card {
   background: var(--surface-solid); border: 1px solid var(--border);
@@ -402,6 +420,63 @@ div[data-testid="stHorizontalBlock"] .stButton > button {
 }
 .stTabs [aria-selected="true"] {
   background: var(--primary-soft) !important; color: var(--primary-deep) !important;
+}
+
+/* Sidebar nav feels like one segmented control */
+[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:has(button[kind]) {
+  gap: 0.35rem !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+  min-height: 38px !important;
+}
+
+/* Dark-mode Streamlit chrome */
+.stApp.sakoon-theme-dark [data-testid="stExpander"] {
+  background: var(--surface-solid) !important;
+  border-color: var(--border) !important;
+}
+.stApp.sakoon-theme-dark [data-testid="stMetricValue"],
+.stApp.sakoon-theme-dark [data-testid="stMetricLabel"],
+.stApp.sakoon-theme-dark label,
+.stApp.sakoon-theme-dark .stMarkdown,
+.stApp.sakoon-theme-dark .stCaption {
+  color: var(--text) !important;
+}
+.stApp.sakoon-theme-dark .stSelectbox > div > div,
+.stApp.sakoon-theme-dark [data-baseweb="select"] > div {
+  background: var(--surface-solid) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+.stApp.sakoon-theme-dark [data-testid="stChatInput"] textarea {
+  background: var(--surface-solid) !important;
+  color: var(--text) !important;
+}
+
+/* Mobile: denser sidebar, larger tap targets, safe chat padding */
+@media (max-width: 768px) {
+  section.main .block-container {
+    padding-top: 0.85rem !important;
+    padding-left: 0.85rem !important;
+    padding-right: 0.85rem !important;
+    padding-bottom: 6.5rem !important;
+  }
+  [data-testid="stSidebar"] > div:first-child { padding: 0.85rem 0.7rem !important; }
+  .sakoon-brand-title { font-size: 1.2rem !important; }
+  .sakoon-page-hero h2 { font-size: 1.4rem !important; }
+  .sakoon-bubble { font-size: 15px !important; padding: 12px 14px !important; }
+  .sakoon-avatar { width: 32px; height: 32px; border-radius: 12px; font-size: 12px; }
+  [data-testid="stSidebar"] .stButton > button {
+    min-height: 42px !important;
+    font-size: 13px !important;
+  }
+  .sakoon-scroll-fab { right: 14px; bottom: 88px; }
+  [data-testid="stChatInput"] { padding-bottom: env(safe-area-inset-bottom, 0); }
+}
+
+@media (max-width: 480px) {
+  .sakoon-bubble-col { max-width: 94% !important; }
+  .sakoon-meta-row { gap: 6px; }
 }
 
 #MainMenu, footer, header { visibility: hidden; }

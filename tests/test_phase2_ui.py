@@ -81,3 +81,29 @@ def test_coping_copy_all_actions():
         assert ur.get("title")
         if action != "journaling_prompt":
             assert len(en.get("steps", [])) >= 3
+
+
+def test_chrome_copy_bilingual_keys():
+    from sakoon.ui.shell import chrome_copy, shell_view_class
+
+    required = {
+        "nav_label", "dark", "new_chat", "copy", "regen", "latest",
+        "disclaimer", "chat_hint", "local_note", "voice", "report",
+    }
+    for lang in ("english", "urdu", "roman_urdu"):
+        ui = chrome_copy(lang)
+        assert required.issubset(ui.keys())
+        assert all(ui[k] for k in required)
+
+    assert shell_view_class("chat") == "sakoon-view-chat"
+    assert shell_view_class("wellness") == "sakoon-view-wellness"
+    assert shell_view_class("insights") == "sakoon-view-insights"
+
+
+def test_inject_styles_applies_view_class():
+    import inspect
+    from sakoon.ui import components as c
+
+    src = inspect.getsource(c.inject_styles)
+    assert "shell_view_class" in src
+    assert "sakoon-view-chat" in src

@@ -19,11 +19,16 @@ from sakoon.ui.coping import COPING_ACTIONS, start_coping
 def render_wellness_nav(lang: str) -> str:
     """Sidebar Chat / Wellness / Insights switcher. Returns selected view key."""
     from sakoon.services.insights import insights_ui_copy
+    from sakoon.ui.shell import chrome_copy
 
     copy = wellness_ui_copy(lang)
     icopy = insights_ui_copy(lang)
+    ui = chrome_copy(lang)
     current = st.session_state.get("main_view", "chat")
-    st.markdown('<p class="sakoon-nav-label">Navigate</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<p class="sakoon-nav-label">{escape_html(ui["nav_label"])}</p>',
+        unsafe_allow_html=True,
+    )
     cols = st.columns(3)
     with cols[0]:
         if st.button(

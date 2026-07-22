@@ -33,6 +33,7 @@ from sakoon.ui.session_ops import start_new_chat, load_past_session, ensure_loca
 from sakoon.ui.wellness import render_wellness_nav, render_wellness_page
 from sakoon.ui.insights import render_insights_page
 from sakoon.ui.auth import render_local_sidebar_note
+from sakoon.ui.shell import chrome_copy, render_chat_shell_intro
 
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -112,7 +113,10 @@ def _init_state():
 
 
 _init_state()
-inject_styles(st.session_state.get("theme", "light"))
+inject_styles(
+    st.session_state.get("theme", "light"),
+    view=st.session_state.get("main_view", "chat"),
+)
 
 # ── DB init + local identity (no login) ───────────────────────────────────────
 _db_ok = init_db()
@@ -141,15 +145,17 @@ else:
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
+_ui = chrome_copy(st.session_state.lang)
+
 with st.sidebar:
     render_brand_header(st.session_state.lang)
-    render_local_sidebar_note()
+    render_local_sidebar_note(st.session_state.lang)
 
     # Theme + new chat
     theme_cols = st.columns(2)
     with theme_cols[0]:
         dark_on = st.toggle(
-            "Dark",
+            _ui["dark"],
             value=st.session_state.theme == "dark",
             key="theme_toggle",
             help="Toggle calm dark theme",
@@ -159,7 +165,7 @@ with st.sidebar:
             st.session_state.theme = new_theme
             st.rerun()
     with theme_cols[1]:
-        if st.button("New chat", use_container_width=True, key="btn_new_chat"):
+        if st.button(_ui["new_chat"], use_container_width=True, key="btn_new_chat"):
             start_new_chat()
             _invalidate_session_caches()
             st.rerun()
@@ -178,11 +184,11 @@ with st.sidebar:
     if st.session_state.mood is not None:
         st.markdown(mood_pill_html(st.session_state.mood, st.session_state.lang), unsafe_allow_html=True)
 
-    with st.expander("Voice", expanded=False):
-        st.caption("Speak in Urdu or English — Whisper handles the rest.")
+    with st.expander(_ui["voice"], expanded=False):
+        st.caption(_ui["voice_hint"])
         lang = st.session_state.lang
         if st.session_state.thinking:
-            st.caption("Voice pauses while Sakoon is replying…")
+            st.caption(_ui["voice_paused"])
             audio_val = None
         else:
             audio_val = st.audio_input(
@@ -216,7 +222,7 @@ with st.sidebar:
 
     # Calming exercises (manual entry)
     with st.expander(
-        "Calming exercises" if st.session_state.lang != "urdu" else "پرسکون مشقیں",
+        _ui["calming"],
         expanded=bool(st.session_state.active_coping),
     ):
         labels = {
@@ -233,7 +239,7 @@ with st.sidebar:
 
     # Persistent emergency support (DESIGN.md §7.4)
     with st.expander(
-        "Need help now?" if st.session_state.lang != "urdu" else "ابھی مدد چاہیے؟",
+        _ui["help_now"],
         expanded=bool(st.session_state.crisis_triggered),
     ):
         if st.session_state.lang == "urdu":
@@ -256,7 +262,7 @@ with st.sidebar:
     recent = _cached_recent_sessions(st.session_state.get("db_user_id"), limit=8)
     if recent:
         with st.expander(
-            "Conversation history" if st.session_state.lang != "urdu" else "گفتگو کی تاریخ",
+            _ui["history"],
             expanded=False,
         ):
             current_id = st.session_state.db_session_id
@@ -280,10 +286,10 @@ with st.sidebar:
                         st.caption("No messages in that session yet.")
 
     # Report / email — collapsed to keep sidebar light
-    with st.expander("Report & email", expanded=bool(st.session_state.report_bytes)):
+    with st.expander(_ui["report"], expanded=bool(st.session_state.report_bytes)):
         can_report = len(st.session_state.messages) >= 2
         if st.button(
-            "Generate Report",
+            _ui["generate_report"],
             use_container_width=True,
             key="btn_report",
             disabled=not can_report,
@@ -339,7 +345,7 @@ with st.sidebar:
 
         if st.session_state.report_bytes:
             st.download_button(
-                label="Download PDF",
+                label=_ui["download_pdf"],
                 data=st.session_state.report_bytes,
                 file_name="Sakoon_Wellness_Report.pdf",
                 mime="application/pdf",
@@ -347,7 +353,7 @@ with st.sidebar:
                 key="btn_download",
             )
 
-        if st.button("Resend to Email", use_container_width=True, key="btn_email", type="secondary"):
+        if st.button(_ui["resend_email"], use_container_width=True, key="btn_email", type="secondary"):
             lang = st.session_state.lang
             email = st.session_state.profile.get("email")
 
@@ -386,9 +392,8 @@ with st.sidebar:
                     st.warning(f"⚠️ {warning_email_msg}")
 
     st.markdown(
-        f'<p class="sakoon-disclaimer">Sakoon AI is not a substitute for '
-        f'professional mental health care. If you are in crisis, please contact '
-        f'a licensed professional or call <strong>{HELPLINE_NUMBER}</strong>.</p>',
+        f'<p class="sakoon-disclaimer">{escape_html(_ui["disclaimer"])} '
+        f'<strong>{HELPLINE_NUMBER}</strong>.</p>',
         unsafe_allow_html=True,
     )
 
@@ -428,6 +433,8 @@ if st.session_state.crisis_triggered:
 
 # Interactive coping / breathing / journal panel
 render_coping_panel(st.session_state.lang)
+
+render_chat_shell_intro(st.session_state.lang, len(st.session_state.messages))
 
 # Error banner (DESIGN.md §8)
 if st.session_state.show_error == "groq":

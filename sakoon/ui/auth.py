@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import streamlit as st
 
+from sakoon.ui.shell import chrome_copy
 
-def render_local_sidebar_note() -> None:
+
+def render_local_sidebar_note(lang: str | None = None) -> None:
     """Privacy note for local-only mode — no accounts."""
-    st.caption("Local session · data stays on this device")
+    resolved = lang or st.session_state.get("lang", "english")
+    st.caption(chrome_copy(resolved)["local_note"])

@@ -105,20 +105,36 @@ def clipboard_write(text: str) -> None:
     )
 
 
-def render_copy_button(text: str, key: str) -> None:
+def render_copy_button(
+    text: str,
+    key: str,
+    *,
+    label: str = "Copy",
+    copied_label: str = "Copied",
+    failed_label: str = "Failed",
+) -> None:
     """
     Copy control that keeps the user gesture: real <button> inside components.html.
     (st.button + post-rerun clipboard write usually fails silently.)
+    Styles are inlined because components.html runs in an isolated iframe.
     """
     payload = base64.b64encode((text or "").encode("utf-8")).decode("ascii")
     safe_key = escape_html(key)
+    lbl = escape_html(label)
+    copied = escape_html(copied_label)
+    failed = escape_html(failed_label)
+    dark = st.session_state.get("theme") == "dark"
+    if dark:
+        color, bg, border = "#99F6E4", "#134E4A", "#115E59"
+    else:
+        color, bg, border = "#0F766E", "#CCFBF1", "#99F6E4"
     components.html(
         f"""
         <button id="sakoon-copy-{safe_key}" type="button"
           style="font-family:Outfit,system-ui,sans-serif;font-size:12px;font-weight:600;
-                 color:#0F766E;background:#CCFBF1;border:1px solid #99F6E4;
+                 color:{color};background:{bg};border:1px solid {border};
                  border-radius:10px;padding:4px 10px;cursor:pointer;">
-          Copy
+          {lbl}
         </button>
         <script>
         (function() {{
@@ -130,11 +146,11 @@ def render_copy_button(text: str, key: str) -> None:
               const bytes = Uint8Array.from(raw, function(c) {{ return c.charCodeAt(0); }});
               const text = new TextDecoder("utf-8").decode(bytes);
               await navigator.clipboard.writeText(text);
-              btn.textContent = "Copied";
-              setTimeout(function() {{ btn.textContent = "Copy"; }}, 1200);
+              btn.textContent = "{copied}";
+              setTimeout(function() {{ btn.textContent = "{lbl}"; }}, 1200);
             }} catch (e) {{
-              btn.textContent = "Failed";
-              setTimeout(function() {{ btn.textContent = "Copy"; }}, 1200);
+              btn.textContent = "{failed}";
+              setTimeout(function() {{ btn.textContent = "{lbl}"; }}, 1200);
             }}
           }});
         }})();
@@ -221,10 +237,19 @@ def _render_message_actions(
     show_regenerate: bool = False,
 ) -> None:
     """Timestamp + Copy (+ optional Regenerate)."""
+    from sakoon.ui.shell import chrome_copy
+
+    ui = chrome_copy(st.session_state.get("lang", "english"))
     if align_end:
         cols = st.columns([1, 1, 4])
         with cols[0]:
-            render_copy_button(text, key=f"u_{key_prefix}")
+            render_copy_button(
+                text,
+                key=f"u_{key_prefix}",
+                label=ui["copy"],
+                copied_label=ui["copied"],
+                failed_label=ui["copy_failed"],
+            )
         with cols[2]:
             st.markdown(
                 f'<div class="sakoon-meta-row" style="justify-content:flex-end">'
@@ -239,17 +264,26 @@ def _render_message_actions(
                 unsafe_allow_html=True,
             )
         with cols[1]:
-            render_copy_button(text, key=f"a_{key_prefix}")
+            render_copy_button(
+                text,
+                key=f"a_{key_prefix}",
+                label=ui["copy"],
+                copied_label=ui["copied"],
+                failed_label=ui["copy_failed"],
+            )
         if show_regenerate:
             with cols[2]:
-                if st.button("Regen", key=f"regen_{key_prefix}", help="Regenerate reply"):
+                if st.button(ui["regen"], key=f"regen_{key_prefix}", help=ui["regen_help"]):
                     st.session_state.regenerate_requested = True
                     st.rerun()
 
 
 def render_scroll_to_bottom() -> None:
     """Lightweight jump-to-latest control for long chats."""
-    if st.button("↓ Latest", key="scroll_latest", help="Jump to latest message"):
+    from sakoon.ui.shell import chrome_copy
+
+    ui = chrome_copy(st.session_state.get("lang", "english"))
+    if st.button(ui["latest"], key="scroll_latest", help=ui["latest_help"]):
         components.html(
             """
             <script>
@@ -315,8 +349,8 @@ def banner(kind: str, text: str) -> None:
     )
 
 
-def inject_styles(theme: str = "light") -> None:
-    """Inject CSS + theme class. CSS string is compiled once per process."""
+def inject_styles(theme: str = "light", view: str = "chat") -> None:
+    """Inject CSS + theme/view classes. CSS string is compiled once per process."""
     global _COMPILED_CSS
     if _COMPILED_CSS is None:
         from sakoon.ui.styles import CUSTOM_CSS
@@ -324,6 +358,9 @@ def inject_styles(theme: str = "light") -> None:
 
     st.markdown(_COMPILED_CSS, unsafe_allow_html=True)
     is_dark = "true" if theme == "dark" else "false"
+    from sakoon.ui.shell import shell_view_class
+
+    view_cls = shell_view_class(view)
     components.html(
         f"""
         <script>
@@ -336,6 +373,10 @@ def inject_styles(theme: str = "light") -> None:
           }} else {{
             app.classList.remove('sakoon-theme-dark');
           }}
+          ['sakoon-view-chat','sakoon-view-wellness','sakoon-view-insights'].forEach(function(c) {{
+            app.classList.remove(c);
+          }});
+          app.classList.add('{view_cls}');
         }})();
         </script>
         """,
