@@ -110,10 +110,13 @@ def render_bubble(
     msg_index: int = 0,
     enable_markdown: bool = True,
     show_actions: bool = True,
+    show_regenerate: bool = False,
+    avatar_label: str | None = None,
 ) -> None:
     """Render a chat bubble. Copy uses st.button + clipboard JS (never onclick in markdown)."""
     urdu_cls = " urdu" if is_urdu_script(text) else ""
     stamp = escape_html(ts or timestamp_now())
+    mark = escape_html((avatar_label or ("S" if role == "assistant" else "U"))[:2])
 
     if is_redirect:
         safe = escape_html(text or "")
@@ -132,7 +135,7 @@ def render_bubble(
     if role == "assistant":
         st.markdown(
             f'<div class="sakoon-bubble-wrap assistant">'
-            f'<div class="sakoon-avatar" aria-hidden="true">S</div>'
+            f'<div class="sakoon-avatar" aria-hidden="true">{mark}</div>'
             f'<div class="sakoon-bubble-col">'
             f'<div class="sakoon-bubble assistant{urdu_cls}">{body}</div>'
             f"</div></div>",
@@ -144,14 +147,17 @@ def render_bubble(
                 stamp=stamp,
                 key_prefix=f"a_{msg_index}",
                 align_end=False,
+                show_regenerate=show_regenerate,
             )
     else:
-        prefix = "🎙️ " if is_voice else ""
+        prefix = '<span class="sakoon-voice-badge">Voice</span> ' if is_voice else ""
         st.markdown(
             f'<div class="sakoon-bubble-wrap user">'
             f'<div class="sakoon-bubble-col user">'
             f'<div class="sakoon-bubble user{urdu_cls}">{prefix}{body}</div>'
-            f"</div></div>",
+            f"</div>"
+            f'<div class="sakoon-avatar user-avatar" aria-hidden="true">{mark}</div>'
+            f"</div>",
             unsafe_allow_html=True,
         )
         if show_actions:
@@ -160,6 +166,7 @@ def render_bubble(
                 stamp=stamp,
                 key_prefix=f"u_{msg_index}",
                 align_end=True,
+                show_regenerate=False,
             )
 
 
@@ -168,31 +175,37 @@ def _render_message_actions(
     stamp: str,
     key_prefix: str,
     align_end: bool = False,
+    show_regenerate: bool = False,
 ) -> None:
-    """Timestamp + Copy button row (native widgets — no HTML onclick)."""
+    """Timestamp + Copy (+ optional Regenerate) using native widgets."""
     if align_end:
-        left, right = st.columns([1, 5])
-        with left:
+        cols = st.columns([1, 1, 4])
+        with cols[0]:
             if st.button("Copy", key=f"copy_{key_prefix}", help="Copy message"):
                 clipboard_write(text)
                 st.toast("Copied")
-        with right:
+        with cols[2]:
             st.markdown(
                 f'<div class="sakoon-meta-row" style="justify-content:flex-end">'
                 f'<span class="sakoon-ts">{stamp}</span></div>',
                 unsafe_allow_html=True,
             )
     else:
-        left, right = st.columns([5, 1])
-        with left:
+        cols = st.columns([4, 1, 1] if show_regenerate else [5, 1])
+        with cols[0]:
             st.markdown(
                 f'<div class="sakoon-meta-row"><span class="sakoon-ts">{stamp}</span></div>',
                 unsafe_allow_html=True,
             )
-        with right:
+        with cols[1]:
             if st.button("Copy", key=f"copy_{key_prefix}", help="Copy message"):
                 clipboard_write(text)
                 st.toast("Copied")
+        if show_regenerate:
+            with cols[2]:
+                if st.button("Regen", key=f"regen_{key_prefix}", help="Regenerate reply"):
+                    st.session_state.regenerate_requested = True
+                    st.rerun()
 
 
 def render_typing() -> None:

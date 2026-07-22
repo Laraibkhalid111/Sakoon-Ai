@@ -462,8 +462,25 @@ if st.session_state.db_error:
 if st.session_state.thinking:
     render_thinking_bar(st.session_state.lang)
 
+def _avatar_initials() -> str:
+    name = (st.session_state.get("auth_username") or st.session_state.profile.get("name") or "You").strip()
+    parts = name.replace("_", " ").split()
+    if len(parts) >= 2:
+        return (parts[0][0] + parts[1][0]).upper()
+    return (name[:2] if len(name) > 1 else name[:1] or "Y").upper()
+
+_user_avatar = _avatar_initials()
+_last_idx = len(st.session_state.messages) - 1
+
 # Chat history
 for idx, msg in enumerate(st.session_state.messages):
+    is_last_assistant = (
+        idx == _last_idx
+        and msg["role"] == "assistant"
+        and not msg.get("is_redirect", False)
+        and not st.session_state.thinking
+        and not st.session_state.get("session_closed")
+    )
     render_bubble(
         role=msg["role"],
         text=msg["content"],
@@ -472,6 +489,8 @@ for idx, msg in enumerate(st.session_state.messages):
         ts=msg.get("ts"),
         msg_index=idx,
         enable_markdown=(msg["role"] == "assistant" and not msg.get("is_redirect", False)),
+        show_regenerate=is_last_assistant,
+        avatar_label="S" if msg["role"] == "assistant" else _user_avatar,
     )
 
 # ── Chat input handling ───────────────────────────────────────────────────────
@@ -489,6 +508,28 @@ else:
     )
 
 user_input = st.chat_input(placeholder_text, disabled=st.session_state.thinking)
+
+
+def _queue_regenerate() -> bool:
+    """Drop last assistant reply and re-queue the preceding user turn (no duplicate user msg)."""
+    msgs = st.session_state.messages
+    if len(msgs) < 2 or msgs[-1].get("role") != "assistant":
+        return False
+    msgs.pop()
+    hist = st.session_state.groq_history
+    if hist and hist[-1].get("role") == "assistant":
+        hist.pop()
+    last_user = next((m for m in reversed(msgs) if m.get("role") == "user"), None)
+    if not last_user:
+        return False
+    st.session_state.pending_ai_turn = {
+        "raw": last_user.get("content") or "",
+        "is_voice": bool(last_user.get("is_voice")),
+        "regenerate": True,
+    }
+    st.session_state.thinking = True
+    emit("chat_regenerate", user_id=st.session_state.get("db_user_id"))
+    return True
 
 
 def _process_ai_turn(raw: str, is_voice: bool) -> None:
@@ -642,6 +683,11 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
                     preferred_language=st.session_state.lang,
                 )
 
+
+# Process regenerate request (from last assistant "Regen" button)
+if st.session_state.pop("regenerate_requested", False) and not st.session_state.thinking:
+    if _queue_regenerate():
+        st.rerun()
 
 # Process queued AI turn from previous run (input stays disabled while thinking)
 if st.session_state.pending_ai_turn and st.session_state.thinking:

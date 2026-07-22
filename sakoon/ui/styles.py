@@ -268,6 +268,19 @@ div[data-testid="stHorizontalBlock"] .stButton > button {
   margin: 0 auto;
   box-shadow: none;
 }
+.sakoon-voice-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-primary-dark);
+  background: var(--color-primary-light);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
 .sakoon-bubble.urdu {
   font-family: var(--sakoon-urdu);
   font-size: 17px;
