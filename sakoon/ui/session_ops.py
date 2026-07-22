@@ -6,10 +6,14 @@ import streamlit as st
 
 from sakoon.db import (
     create_session,
+    delete_session,
+    export_session_markdown,
     get_messages,
     get_or_create_local_user,
     get_snapshot,
+    rename_session,
     session_belongs_to_user,
+    session_label,
 )
 from sakoon.services.prompts import WELCOME_MESSAGE
 from sakoon.ui.components import timestamp_now
@@ -157,3 +161,102 @@ def load_past_session(session_id: int) -> bool:
         st.session_state.profile = profile
 
     return True
+
+
+def render_conversation_history(
+    recent: list,
+    ui: dict,
+    *,
+    on_mutate=None,
+) -> None:
+    """
+    ChatGPT-lite history: open, rename, export Markdown, delete (local only).
+    `on_mutate` is called after rename/delete so the caller can clear caches.
+    """
+    if not recent:
+        st.caption(ui.get("empty_history", "No past conversations yet."))
+        return
+
+    current_id = st.session_state.db_session_id
+    uid = st.session_state.get("db_user_id")
+
+    for row in recent:
+        sid = int(row.get("id"))
+        label = session_label(row)
+        started = row.get("started_at") or ""
+        risk = row.get("risk_level") or "low"
+        is_current = sid == current_id
+        btn_label = f"{'• ' if is_current else ''}{label}"
+
+        open_col, menu_col = st.columns([4, 1])
+        with open_col:
+            if st.button(
+                btn_label,
+                key=f"hist_{sid}",
+                use_container_width=True,
+                disabled=is_current,
+                help=f"{started} · {risk}",
+            ):
+                if load_past_session(sid):
+                    st.rerun()
+                else:
+                    st.caption("No messages in that session yet.")
+
+        with menu_col:
+            with st.popover(ui.get("manage", "⋯"), use_container_width=True):
+                st.caption(label)
+                new_title = st.text_input(
+                    ui.get("rename", "Rename"),
+                    value=label if (row.get("title") or "").strip() else "",
+                    key=f"rename_input_{sid}",
+                    placeholder=ui.get("rename_placeholder", "Conversation title"),
+                    label_visibility="collapsed",
+                )
+                if st.button(
+                    ui.get("rename_save", "Save"),
+                    key=f"rename_save_{sid}",
+                    use_container_width=True,
+                ):
+                    if uid and rename_session(sid, int(uid), new_title or label):
+                        if on_mutate:
+                            on_mutate()
+                        st.rerun()
+                    else:
+                        st.caption("Could not rename.")
+
+                md = None
+                if uid:
+                    md = export_session_markdown(sid, int(uid))
+                if md:
+                    safe_name = "".join(
+                        c if c.isalnum() or c in ("-", "_") else "_"
+                        for c in (label[:40] or f"session_{sid}")
+                    )
+                    st.download_button(
+                        ui.get("export_md", "Export (.md)"),
+                        data=md.encode("utf-8"),
+                        file_name=f"sakoon_{safe_name}.md",
+                        mime="text/markdown",
+                        key=f"export_md_{sid}",
+                        use_container_width=True,
+                    )
+
+                confirm = st.checkbox(
+                    ui.get("delete_confirm", "Confirm delete"),
+                    key=f"del_confirm_{sid}",
+                )
+                if st.button(
+                    ui.get("delete", "Delete"),
+                    key=f"del_btn_{sid}",
+                    use_container_width=True,
+                    type="secondary",
+                    disabled=not confirm,
+                ):
+                    if uid and delete_session(sid, int(uid)):
+                        if is_current:
+                            start_new_chat()
+                        if on_mutate:
+                            on_mutate()
+                        st.rerun()
+                    else:
+                        st.caption("Could not delete.")

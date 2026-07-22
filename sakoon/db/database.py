@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     started_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     ended_at         TIMESTAMP,
     primary_concern  TEXT,
+    title            TEXT,
     risk_level       TEXT DEFAULT 'low',
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
@@ -119,22 +120,35 @@ def _utc_now() -> str:
 
 def init_db() -> bool:
     """
-    Create all tables if they don't exist. Safe to call often — skips work once
-    the schema has been applied for the current DB_PATH in this process.
+    Create all tables if they don't exist. Safe to call often — skips heavy
+    schema script once applied for the current DB_PATH in this process, but
+    always runs lightweight column migrations.
     Returns True on success, False on failure.
     """
     global _SCHEMA_READY_FOR
     try:
-        if _SCHEMA_READY_FOR == DB_PATH and Path(DB_PATH).exists():
-            return True
+        already = _SCHEMA_READY_FOR == DB_PATH and Path(DB_PATH).exists()
         with _connect() as conn:
-            conn.executescript(_SCHEMA)
-            _migrate_auth_columns(conn)
+            if not already:
+                conn.executescript(_SCHEMA)
+            _migrate_schema(conn)
         _SCHEMA_READY_FOR = DB_PATH
         return True
     except Exception as e:
         log.error("init_db failed: %s", e)
         return False
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Additive migrations for existing SQLite files."""
+    _migrate_auth_columns(conn)
+    _migrate_session_title(conn)
+
+
+def _migrate_session_title(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "title" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
 
 
 def _migrate_auth_columns(conn: sqlite3.Connection) -> None:
@@ -344,7 +358,8 @@ def create_session(user_id: int | None) -> int | None:
 def update_session(session_id: int, user_id: int | None = None,
                    primary_concern: str | None = None,
                    risk_level: str | None = None,
-                   ended_at: str | None = None) -> bool:
+                   ended_at: str | None = None,
+                   title: str | None = None) -> bool:
     """Update mutable fields on an existing session row."""
     updates, values = [], []
     if user_id is not None:
@@ -355,6 +370,8 @@ def update_session(session_id: int, user_id: int | None = None,
         updates.append("risk_level = ?"); values.append(risk_level)
     if ended_at is not None:
         updates.append("ended_at = ?"); values.append(ended_at)
+    if title is not None:
+        updates.append("title = ?"); values.append(title)
     if not updates:
         return True
     try:
@@ -372,6 +389,142 @@ def update_session(session_id: int, user_id: int | None = None,
 def close_session(session_id: int) -> bool:
     """Mark a session as ended with the current timestamp."""
     return update_session(session_id, ended_at=_utc_now())
+
+
+def rename_session(session_id: int, user_id: int, title: str) -> bool:
+    """Set a custom conversation title (local ChatGPT-lite rename)."""
+    clean = (title or "").strip()
+    if not clean or not session_belongs_to_user(session_id, user_id):
+        return False
+    if len(clean) > 120:
+        clean = clean[:120].rstrip()
+    return update_session(session_id, title=clean)
+
+
+def ensure_session_title_from_text(session_id: int, text: str) -> bool:
+    """
+    If the session has no title yet, set one from the first user message snippet.
+    Does not overwrite a user-renamed title.
+    """
+    snippet = " ".join((text or "").strip().split())
+    if not snippet:
+        return False
+    if len(snippet) > 60:
+        snippet = snippet[:57].rstrip() + "…"
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT title FROM sessions WHERE id = ? LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            if not row or (row["title"] or "").strip():
+                return False
+            conn.execute(
+                "UPDATE sessions SET title = ? WHERE id = ?",
+                (snippet, session_id),
+            )
+        return True
+    except Exception as e:
+        log.error("ensure_session_title_from_text failed: %s", e)
+        return False
+
+
+def delete_session(session_id: int, user_id: int) -> bool:
+    """
+    Delete a conversation owned by user_id.
+    Removes messages + snapshot; detaches mood/journal rows (keeps wellness data).
+    """
+    if not session_belongs_to_user(session_id, user_id):
+        return False
+    try:
+        with _connect() as conn:
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM symptom_snapshots WHERE session_id = ?", (session_id,))
+            conn.execute(
+                "UPDATE mood_logs SET session_id = NULL WHERE session_id = ?",
+                (session_id,),
+            )
+            conn.execute(
+                "UPDATE journal_entries SET session_id = NULL WHERE session_id = ?",
+                (session_id,),
+            )
+            cur = conn.execute(
+                "DELETE FROM sessions WHERE id = ? AND user_id = ?",
+                (session_id, user_id),
+            )
+            return cur.rowcount > 0
+    except Exception as e:
+        log.error("delete_session failed: %s", e)
+        return False
+
+
+def export_session_markdown(session_id: int, user_id: int) -> str | None:
+    """Export an owned session as Markdown text, or None if missing/unauthorized."""
+    if not session_belongs_to_user(session_id, user_id):
+        return None
+    try:
+        with _connect() as conn:
+            meta = conn.execute(
+                """SELECT id, title, primary_concern, started_at, risk_level
+                   FROM sessions WHERE id = ? LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+            if not meta:
+                return None
+            rows = conn.execute(
+                """SELECT role, content, input_mode, timestamp
+                   FROM messages WHERE session_id = ?
+                   ORDER BY id ASC""",
+                (session_id,),
+            ).fetchall()
+        title = (
+            (meta["title"] or "").strip()
+            or (meta["primary_concern"] or "").strip()
+            or f"Session #{meta['id']}"
+        )
+        lines = [
+            f"# {title}",
+            "",
+            f"- Session id: {meta['id']}",
+            f"- Started: {meta['started_at'] or '—'}",
+            f"- Risk: {meta['risk_level'] or 'low'}",
+            "",
+            "---",
+            "",
+        ]
+        for row in rows:
+            role = (row["role"] or "assistant").strip().lower()
+            who = "You" if role == "user" else "Sakoon"
+            mode = row["input_mode"] or "text"
+            stamp = row["timestamp"] or ""
+            header = f"### {who}"
+            if stamp:
+                header += f" · {stamp}"
+            if mode == "voice" and role == "user":
+                header += " · voice"
+            lines.append(header)
+            lines.append("")
+            lines.append((row["content"] or "").strip() or "_(empty)_")
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+    except Exception as e:
+        log.error("export_session_markdown failed: %s", e)
+        return None
+
+
+def session_label(row: dict) -> str:
+    """Human label for sidebar history rows."""
+    title = (row.get("title") or "").strip()
+    if title:
+        return title
+    concern = (row.get("primary_concern") or "").strip()
+    if concern:
+        return concern
+    name = (row.get("name") or "").strip()
+    if name and name.lower() not in ("local", "__local__"):
+        return name
+    sid = row.get("id")
+    return f"Session #{sid}" if sid is not None else "Session"
 
 
 # ── Messages ──────────────────────────────────────────────────────────────────
@@ -514,7 +667,7 @@ def get_recent_sessions(limit: int = 5, user_id: int | None = None) -> list[dict
         with _connect() as conn:
             if user_id is not None:
                 rows = conn.execute(
-                    """SELECT s.id, u.name, s.primary_concern, s.started_at, s.risk_level
+                    """SELECT s.id, u.name, s.title, s.primary_concern, s.started_at, s.risk_level
                        FROM sessions s
                        LEFT JOIN users u ON u.id = s.user_id
                        WHERE s.user_id = ?
@@ -524,7 +677,7 @@ def get_recent_sessions(limit: int = 5, user_id: int | None = None) -> list[dict
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT s.id, u.name, s.primary_concern, s.started_at, s.risk_level
+                    """SELECT s.id, u.name, s.title, s.primary_concern, s.started_at, s.risk_level
                        FROM sessions s
                        LEFT JOIN users u ON u.id = s.user_id
                        ORDER BY s.started_at DESC

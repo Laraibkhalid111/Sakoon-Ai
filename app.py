@@ -19,7 +19,7 @@ from sakoon.services.safety import check_crisis
 from sakoon.db import (
     init_db, update_user, create_session, update_session,
     close_session, log_message, upsert_snapshot, get_recent_sessions,
-    add_mood_log, delete_last_assistant_message,
+    add_mood_log, delete_last_assistant_message, ensure_session_title_from_text,
 )
 from sakoon.services.report import build_report, build_session_data
 from sakoon.services.emailer import send_email_report
@@ -29,7 +29,9 @@ from sakoon.ui.components import (
     render_brand_header, render_scroll_to_bottom,
 )
 from sakoon.ui.coping import render_coping_panel, start_coping, COPING_ACTIONS
-from sakoon.ui.session_ops import start_new_chat, load_past_session, ensure_local_identity
+from sakoon.ui.session_ops import (
+    start_new_chat, load_past_session, ensure_local_identity, render_conversation_history,
+)
 from sakoon.ui.wellness import render_wellness_nav, render_wellness_page
 from sakoon.ui.insights import render_insights_page
 from sakoon.ui.auth import render_local_sidebar_note
@@ -258,32 +260,14 @@ with st.sidebar:
                 "If you are in immediate danger, also call your local emergency number."
             )
 
-    # Past sessions — loadable (cached briefly)
-    recent = _cached_recent_sessions(st.session_state.get("db_user_id"), limit=8)
-    if recent:
-        with st.expander(
-            _ui["history"],
-            expanded=False,
-        ):
-            current_id = st.session_state.db_session_id
-            for row in recent:
-                sid = row.get("id")
-                label = row.get("primary_concern") or row.get("name") or f"Session #{sid}"
-                started = row.get("started_at") or ""
-                risk = row.get("risk_level") or "low"
-                is_current = sid == current_id
-                btn_label = f"{'• ' if is_current else ''}{label}"
-                if st.button(
-                    btn_label,
-                    key=f"hist_{sid}",
-                    use_container_width=True,
-                    disabled=is_current,
-                    help=f"{started} · {risk}",
-                ):
-                    if load_past_session(int(sid)):
-                        st.rerun()
-                    else:
-                        st.caption("No messages in that session yet.")
+    # Past sessions — open / rename / export / delete
+    recent = _cached_recent_sessions(st.session_state.get("db_user_id"), limit=12)
+    with st.expander(_ui["history"], expanded=False):
+        render_conversation_history(
+            recent,
+            _ui,
+            on_mutate=_invalidate_session_caches,
+        )
 
     # Report / email — collapsed to keep sidebar light
     with st.expander(_ui["report"], expanded=bool(st.session_state.report_bytes)):
@@ -784,6 +768,9 @@ if raw_input:
             ok1 = log_message(sid, "user", raw, input_mode="voice" if _is_voice_turn else "text")
             ok2 = log_message(sid, "assistant", crisis_reply, input_mode="text")
             ok3 = update_session(sid, risk_level="crisis")
+            if ok1:
+                ensure_session_title_from_text(int(sid), raw)
+                _invalidate_session_caches()
             if not ok1 or not ok2 or not ok3:
                 st.session_state.db_error = True
 
@@ -819,6 +806,9 @@ if raw_input:
         if sid:
             if not log_message(sid, "user", raw, input_mode="voice" if _is_voice_turn else "text"):
                 st.session_state.db_error = True
+            else:
+                ensure_session_title_from_text(int(sid), raw)
+                _invalidate_session_caches()
 
         st.session_state.pending_ai_turn = {"raw": raw, "is_voice": _is_voice_turn}
         st.session_state.thinking = True
