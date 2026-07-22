@@ -57,3 +57,15 @@ def test_delete_last_assistant_message(tmp_path, monkeypatch):
     assert len(rows) == 2
     assert rows[-1]["content"] == "first"
     assert rows[-1]["role"] == "assistant"
+
+
+def test_init_db_skips_repeat_work(tmp_path, monkeypatch):
+    import sakoon.db.database as db
+
+    path = tmp_path / "once.db"
+    monkeypatch.setattr(db, "DB_PATH", path)
+    db._SCHEMA_READY_FOR = None
+    assert db.init_db() is True
+    assert db._SCHEMA_READY_FOR == path
+    # Second call should no-op successfully without error
+    assert db.init_db() is True

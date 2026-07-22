@@ -34,6 +34,16 @@ from sakoon.ui.wellness import render_wellness_nav, render_wellness_page
 from sakoon.ui.insights import render_insights_page
 from sakoon.ui.auth import render_local_sidebar_note
 
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _cached_recent_sessions(user_id: int | None, limit: int = 8) -> list:
+    """Short-lived cache — avoids hitting SQLite on every unrelated widget rerun."""
+    return get_recent_sessions(limit=limit, user_id=user_id)
+
+
+def _invalidate_session_caches() -> None:
+    _cached_recent_sessions.clear()
+
 setup_logging(get_settings().log_level)
 log = get_logger(__name__)
 
@@ -151,6 +161,7 @@ with st.sidebar:
     with theme_cols[1]:
         if st.button("New chat", use_container_width=True, key="btn_new_chat"):
             start_new_chat()
+            _invalidate_session_caches()
             st.rerun()
 
     render_wellness_nav(st.session_state.lang)
@@ -163,7 +174,45 @@ with st.sidebar:
         label_visibility="collapsed",
         key="lang_override_select",
     )
-    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
+
+    if st.session_state.mood is not None:
+        st.markdown(mood_pill_html(st.session_state.mood, st.session_state.lang), unsafe_allow_html=True)
+
+    with st.expander("Voice", expanded=False):
+        st.caption("Speak in Urdu or English — Whisper handles the rest.")
+        lang = st.session_state.lang
+        if st.session_state.thinking:
+            st.caption("Voice pauses while Sakoon is replying…")
+            audio_val = None
+        else:
+            audio_val = st.audio_input(
+                label="Record your message",
+                key=f"voice_recorder_{st.session_state.voice_recorder_key}",
+                label_visibility="collapsed",
+            )
+
+        if audio_val is not None:
+            audio_bytes = audio_val.read()
+            with st.spinner("Transcribing…" if lang != "urdu" else "لکھا جا رہا ہے…"):
+                transcript = transcribe_audio(audio_bytes, filename="voice.wav")
+
+            if transcript:
+                st.session_state.pending_voice_text = transcript
+                st.session_state.whisper_error = False
+                st.session_state.voice_recorder_key += 1
+                st.rerun()
+            else:
+                st.session_state.whisper_error = True
+                st.session_state.voice_recorder_key += 1
+                st.rerun()
+
+        if st.session_state.whisper_error:
+            fail_copy = (
+                ERROR_COPY["whisper_failure"]["ur"]
+                if lang == "urdu"
+                else ERROR_COPY["whisper_failure"]["en"]
+            )
+            banner("warning", f"⚠️ {fail_copy}")
 
     # Calming exercises (manual entry)
     with st.expander(
@@ -181,50 +230,6 @@ with st.sidebar:
                 if st.button(labels[action], key=f"btn_start_{action}", use_container_width=True):
                     start_coping(action)
                     st.rerun()
-
-    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
-
-    # ── Voice (always visible — speak in Urdu or English) ───────────────────
-    st.markdown(
-        '<div class="sakoon-voice-card"><h4>Voice</h4>'
-        '<p class="sakoon-ts" style="margin:0">Speak in Urdu or English — Whisper handles the rest.</p></div>',
-        unsafe_allow_html=True,
-    )
-    lang = st.session_state.lang
-    if st.session_state.thinking:
-        st.caption("Voice pauses while Sakoon is replying…")
-        audio_val = None
-    else:
-        audio_val = st.audio_input(
-            label="Record your message",
-            key=f"voice_recorder_{st.session_state.voice_recorder_key}",
-            label_visibility="collapsed",
-        )
-
-    if audio_val is not None:
-        audio_bytes = audio_val.read()
-        with st.spinner("Transcribing…" if lang != "urdu" else "لکھا جا رہا ہے…"):
-            transcript = transcribe_audio(audio_bytes, filename="voice.wav")
-
-        if transcript:
-            st.session_state.pending_voice_text = transcript
-            st.session_state.whisper_error = False
-            st.session_state.voice_recorder_key += 1
-            st.rerun()
-        else:
-            st.session_state.whisper_error = True
-            st.session_state.voice_recorder_key += 1
-            st.rerun()
-
-    if st.session_state.whisper_error:
-        fail_copy = (
-            ERROR_COPY["whisper_failure"]["ur"]
-            if lang == "urdu"
-            else ERROR_COPY["whisper_failure"]["en"]
-        )
-        banner("warning", f"⚠️ {fail_copy}")
-
-    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
 
     # Persistent emergency support (DESIGN.md §7.4)
     with st.expander(
@@ -247,13 +252,8 @@ with st.sidebar:
                 "If you are in immediate danger, also call your local emergency number."
             )
 
-    # Mood pill
-    if st.session_state.mood is not None:
-        st.markdown(mood_pill_html(st.session_state.mood, st.session_state.lang), unsafe_allow_html=True)
-        st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
-
-    # Past sessions — loadable
-    recent = get_recent_sessions(limit=8, user_id=st.session_state.get("db_user_id"))
+    # Past sessions — loadable (cached briefly)
+    recent = _cached_recent_sessions(st.session_state.get("db_user_id"), limit=8)
     if recent:
         with st.expander(
             "Conversation history" if st.session_state.lang != "urdu" else "گفتگو کی تاریخ",
@@ -279,120 +279,114 @@ with st.sidebar:
                     else:
                         st.caption("No messages in that session yet.")
 
-    # ── Generate Report (DESIGN.md §6.6 primary button, T5.6) ──────────────
-    # Disabled until at least one exchange has happened
-    can_report = len(st.session_state.messages) >= 2
-    if st.button(
-        "📄 Generate Report",
-        use_container_width=True,
-        key="btn_report",
-        disabled=not can_report,
-        type="primary",
-    ):
-        lang = st.session_state.lang
-        with st.spinner("Building your report..." if lang != "urdu" else "رپورٹ تیار کی جا رہی ہے..."):
-            session_data = build_session_data(st.session_state)
-            narrative = generate_report_narrative(session_data)
-            pdf_bytes = build_report(session_data, narrative=narrative)
+    # Report / email — collapsed to keep sidebar light
+    with st.expander("Report & email", expanded=bool(st.session_state.report_bytes)):
+        can_report = len(st.session_state.messages) >= 2
+        if st.button(
+            "Generate Report",
+            use_container_width=True,
+            key="btn_report",
+            disabled=not can_report,
+            type="primary",
+        ):
+            lang = st.session_state.lang
+            with st.spinner("Building your report..." if lang != "urdu" else "رپورٹ تیار کی جا رہی ہے..."):
+                session_data = build_session_data(st.session_state)
+                narrative = generate_report_narrative(session_data)
+                pdf_bytes = build_report(session_data, narrative=narrative)
 
-        if pdf_bytes:
-            st.session_state.report_bytes = pdf_bytes
-            st.session_state.last_session_data = session_data
-            st.session_state.last_narrative = narrative
+            if pdf_bytes:
+                st.session_state.report_bytes = pdf_bytes
+                st.session_state.last_session_data = session_data
+                st.session_state.last_narrative = narrative
+                _invalidate_session_caches()
 
-            # Close DB session once a report is generated (end-of-flow signal)
-            sid = st.session_state.db_session_id
-            if sid and not st.session_state.session_closed:
-                if close_session(sid):
-                    st.session_state.session_closed = True
-            
-            # Automatic email send if email address exists
-            email = session_data.get("email")
-            if email and email.strip():
-                with st.spinner("Sending wellness report email..." if lang != "urdu" else "ای میل بھیجی جا رہی ہے..."):
+                sid = st.session_state.db_session_id
+                if sid and not st.session_state.session_closed:
+                    if close_session(sid):
+                        st.session_state.session_closed = True
+
+                email = session_data.get("email")
+                if email and email.strip():
+                    with st.spinner("Sending wellness report email..." if lang != "urdu" else "ای میل بھیجی جا رہی ہے..."):
+                        sent_ok = send_email_report(
+                            recipient=email.strip(),
+                            pdf_bytes=pdf_bytes,
+                            filename="Sakoon_Wellness_Report.pdf",
+                            session_data=session_data,
+                            narrative=narrative
+                        )
+                    if sent_ok:
+                        success_email_msg = (
+                            "رپورٹ تیار ہے اور آپ کی ای میل پر بھیج دی گئی ہے!"
+                            if lang == "urdu" else
+                            "Your report is ready and has been emailed to you!"
+                        )
+                        st.success(f"✅ {success_email_msg}")
+                    else:
+                        warning_email_msg = ERROR_COPY["smtp_failure"]["ur" if lang == "urdu" else "en"]
+                        st.warning(f"⚠️ {warning_email_msg}")
+                else:
+                    success_msg = (
+                        "رپورٹ تیار ہے! نیچے سے ڈاؤن لوڈ کریں۔"
+                        if lang == "urdu" else
+                        "Your report is ready! Download it below."
+                    )
+                    st.success(f"✅ {success_msg}")
+            else:
+                err_copy = ERROR_COPY["pdf_failure"]["ur" if lang == "urdu" else "en"]
+                st.error(f"❌ {err_copy}")
+
+        if st.session_state.report_bytes:
+            st.download_button(
+                label="Download PDF",
+                data=st.session_state.report_bytes,
+                file_name="Sakoon_Wellness_Report.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="btn_download",
+            )
+
+        if st.button("Resend to Email", use_container_width=True, key="btn_email", type="secondary"):
+            lang = st.session_state.lang
+            email = st.session_state.profile.get("email")
+
+            if not email or not email.strip():
+                no_email_msg = (
+                    "ای میل ایڈریس موجود نہیں ہے۔ براہ کرم پہلے گفتگو میں اپنی ای میل شیئر کریں۔"
+                    if lang == "urdu" else
+                    "No email address is on file. Please share your email address in the chat first."
+                )
+                st.warning(f"⚠️ {no_email_msg}")
+            elif not st.session_state.report_bytes:
+                no_report_msg = (
+                    "پہلے رپورٹ تیار کرنے کے لیے 'رپورٹ بنائیں' پر کلک کریں۔"
+                    if lang == "urdu" else
+                    "Please generate a report first by clicking 'Generate Report'."
+                )
+                st.warning(f"⚠️ {no_report_msg}")
+            else:
+                with st.spinner("Resending report email..." if lang != "urdu" else "ای میل دوبارہ بھیجی جا رہی ہے..."):
                     sent_ok = send_email_report(
                         recipient=email.strip(),
-                        pdf_bytes=pdf_bytes,
+                        pdf_bytes=st.session_state.report_bytes,
                         filename="Sakoon_Wellness_Report.pdf",
-                        session_data=session_data,
-                        narrative=narrative
+                        session_data=st.session_state.get("last_session_data", build_session_data(st.session_state)),
+                        narrative=st.session_state.get("last_narrative", "")
                     )
                 if sent_ok:
                     success_email_msg = (
-                        "رپورٹ تیار ہے اور آپ کی ای میل پر بھیج دی گئی ہے!"
+                        "آپ کی رپورٹ ای میل کر دی گئی ہے۔"
                         if lang == "urdu" else
-                        "Your report is ready and has been emailed to you!"
+                        "Your report has been emailed to you."
                     )
                     st.success(f"✅ {success_email_msg}")
                 else:
                     warning_email_msg = ERROR_COPY["smtp_failure"]["ur" if lang == "urdu" else "en"]
                     st.warning(f"⚠️ {warning_email_msg}")
-            else:
-                success_msg = (
-                    "رپورٹ تیار ہے! نیچے سے ڈاؤن لوڈ کریں۔"
-                    if lang == "urdu" else
-                    "Your report is ready! Download it below."
-                )
-                st.success(f"✅ {success_msg}")
-        else:
-            err_copy = ERROR_COPY["pdf_failure"]["ur" if lang == "urdu" else "en"]
-            st.error(f"❌ {err_copy}")
 
-    # Download button (only shown after successful generation)
-    if st.session_state.report_bytes:
-        st.download_button(
-            label="⬇️ Download PDF",
-            data=st.session_state.report_bytes,
-            file_name="Sakoon_Wellness_Report.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-            key="btn_download",
-        )
-
-    # Resend email button (M6)
-    if st.button("📧 Resend to Email", use_container_width=True, key="btn_email", type="secondary"):
-        lang = st.session_state.lang
-        email = st.session_state.profile.get("email")
-        
-        if not email or not email.strip():
-            no_email_msg = (
-                "ای میل ایڈریس موجود نہیں ہے۔ براہ کرم پہلے گفتگو میں اپنی ای میل شیئر کریں۔"
-                if lang == "urdu" else
-                "No email address is on file. Please share your email address in the chat first."
-            )
-            st.warning(f"⚠️ {no_email_msg}")
-        elif not st.session_state.report_bytes:
-            no_report_msg = (
-                "پہلے رپورٹ تیار کرنے کے لیے 'رپورٹ بنائیں' پر کلک کریں۔"
-                if lang == "urdu" else
-                "Please generate a report first by clicking 'Generate Report'."
-            )
-            st.warning(f"⚠️ {no_report_msg}")
-        else:
-            with st.spinner("Resending report email..." if lang != "urdu" else "ای میل دوبارہ بھیجی جا رہی ہے..."):
-                sent_ok = send_email_report(
-                    recipient=email.strip(),
-                    pdf_bytes=st.session_state.report_bytes,
-                    filename="Sakoon_Wellness_Report.pdf",
-                    session_data=st.session_state.get("last_session_data", build_session_data(st.session_state)),
-                    narrative=st.session_state.get("last_narrative", "")
-                )
-            if sent_ok:
-                success_email_msg = (
-                    "آپ کی رپورٹ ای میل کر دی گئی ہے۔"
-                    if lang == "urdu" else
-                    "Your report has been emailed to you."
-                )
-                st.success(f"✅ {success_email_msg}")
-            else:
-                warning_email_msg = ERROR_COPY["smtp_failure"]["ur" if lang == "urdu" else "en"]
-                st.warning(f"⚠️ {warning_email_msg}")
-
-
-
-    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
     st.markdown(
-        f'<p class="sakoon-disclaimer">🫶 Sakoon AI is not a substitute for '
+        f'<p class="sakoon-disclaimer">Sakoon AI is not a substitute for '
         f'professional mental health care. If you are in crisis, please contact '
         f'a licensed professional or call <strong>{HELPLINE_NUMBER}</strong>.</p>',
         unsafe_allow_html=True,
@@ -727,6 +721,7 @@ if st.session_state.pending_ai_turn and st.session_state.thinking:
         _process_ai_turn(turn["raw"], turn.get("is_voice", False))
     finally:
         st.session_state.thinking = False
+        _invalidate_session_caches()
     st.rerun()
 
 # ── Determine raw input (voice transcript takes priority over typed) ──────────

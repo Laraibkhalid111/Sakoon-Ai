@@ -13,6 +13,10 @@ from sakoon.core.security import HELPLINE_NAME, HELPLINE_NUMBER, escape_html
 from sakoon.services.prompts import OFF_TOPIC_REDIRECT
 from sakoon.ui.markdown import markdown_to_safe_html
 
+# Compiled once per process — Streamlit still re-emits CSS each run (required),
+# but we avoid re-processing the large stylesheet string every interaction.
+_COMPILED_CSS: str | None = None
+
 
 def is_urdu_script(text: str) -> bool:
     return bool(re.search(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]", text or ""))
@@ -312,9 +316,13 @@ def banner(kind: str, text: str) -> None:
 
 
 def inject_styles(theme: str = "light") -> None:
-    from sakoon.ui.styles import CUSTOM_CSS
+    """Inject CSS + theme class. CSS string is compiled once per process."""
+    global _COMPILED_CSS
+    if _COMPILED_CSS is None:
+        from sakoon.ui.styles import CUSTOM_CSS
+        _COMPILED_CSS = re.sub(r"\n\s*\n", "\n", CUSTOM_CSS)
 
-    st.markdown(re.sub(r"\n\s*\n", "\n", CUSTOM_CSS), unsafe_allow_html=True)
+    st.markdown(_COMPILED_CSS, unsafe_allow_html=True)
     is_dark = "true" if theme == "dark" else "false"
     components.html(
         f"""

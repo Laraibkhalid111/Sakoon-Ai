@@ -22,6 +22,9 @@ from sakoon.core.paths import DB_PATH as _DEFAULT_DB_PATH
 # Overridable for tests (monkeypatch sakoon.db.database.DB_PATH)
 DB_PATH: Path = _DEFAULT_DB_PATH
 
+# Process-local guard: skip full schema script after first success per DB path
+_SCHEMA_READY_FOR: Path | None = None
+
 log = get_logger(__name__)
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -116,13 +119,18 @@ def _utc_now() -> str:
 
 def init_db() -> bool:
     """
-    Create all tables if they don't exist. Called once at app startup.
+    Create all tables if they don't exist. Safe to call often — skips work once
+    the schema has been applied for the current DB_PATH in this process.
     Returns True on success, False on failure.
     """
+    global _SCHEMA_READY_FOR
     try:
+        if _SCHEMA_READY_FOR == DB_PATH and Path(DB_PATH).exists():
+            return True
         with _connect() as conn:
             conn.executescript(_SCHEMA)
             _migrate_auth_columns(conn)
+        _SCHEMA_READY_FOR = DB_PATH
         return True
     except Exception as e:
         log.error("init_db failed: %s", e)

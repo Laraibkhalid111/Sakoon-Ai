@@ -79,6 +79,7 @@ Post–Phase 6 visual/UX pass on Streamlit (no rewrite):
 - Always-on voice input card — **shipped**
 - Auth gate removed (P0) — local device profile
 - Chat reliability (P1) — iframe Copy, regen deletes DB row, off-topic stream suppress, rate-limit isolation
+- Perf (P2) — compile CSS once/process, skip repeat schema init, cache recent sessions, trim sidebar into expanders
 - Stop generation / message edit / file upload / TTS — still deferred
 
 ## Explicit non-goals for Phases 0–2
