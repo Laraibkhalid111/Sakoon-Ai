@@ -56,10 +56,10 @@ def cancel_ai_turn(*, keep_user_message: bool = True) -> None:
     st.session_state.regenerate_requested = False
     if keep_user_message:
         return
-    msgs = st.session_state.get("messages") or []
+    msgs = getattr(st.session_state, "messages", None) or []
     if msgs and msgs[-1].get("role") == "user":
         msgs.pop()
-    hist = st.session_state.get("groq_history") or []
+    hist = getattr(st.session_state, "groq_history", None) or []
     if hist and hist[-1].get("role") == "user":
         hist.pop()
 
