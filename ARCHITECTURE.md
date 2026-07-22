@@ -83,7 +83,17 @@ Post–Phase 6 visual/UX pass on Streamlit (no rewrite):
 - Unified premium shell (P3) — chat-first column vs wide rooms, bilingual chrome, dark/mobile polish, soft chat intro
 - Conversation mgmt (P4) — rename / delete / Markdown export; auto-title from first message; title column migration
 - Chat polish (P5) — Stop cancels pending generation; auto-scroll; main voice confirm/send (no TTS)
-- Thin `app.py` / more tests / docs — still deferred as P6
+- Maintainability (P6) — thin `app.py` orchestration; `sidebar` / `chat_loop` / `state` / `reply_policy`; critical-path tests
+
+## Package layout (after P6)
+
+```
+app.py                      # page config + wire views (~50 lines)
+sakoon/ui/state.py          # session defaults, DB bootstrap, language
+sakoon/ui/sidebar.py        # theme, nav, history, report/email
+sakoon/ui/chat_loop.py      # messages, Stop, stream, crisis, queue
+sakoon/services/reply_policy.py  # pure reply/profile helpers (unit-tested)
+```
 
 ## Explicit non-goals for Phases 0–2
 

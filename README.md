@@ -47,22 +47,19 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the production upgrade roadmap (evo
 
 ```
 Sakoon-Ai/
-├── app.py                 # Thin Streamlit entrypoint (orchestration)
-├── sakoon/                # Application package (Phase 1+)
-│   ├── core/              # config, logging, validation, security, paths
+├── app.py                 # Thin Streamlit entry (orchestration only)
+├── sakoon/                # Application package
+│   ├── core/              # config, logging, validation, security, health
 │   ├── db/                # SQLite schema + repositories
-│   ├── services/          # chatbot, safety, report, emailer, prompts
-│   └── ui/                # CSS + chat chrome helpers
-├── chatbot.py … emailer.py  # Thin shims → sakoon.* (compat)
-├── Dockerfile             # Container image (Phase 6)
-├── docker-compose.yml     # App + optional backup profile
-├── scripts/backup_db.py   # SQLite backup CLI
-├── .github/workflows/ci.yml
+│   ├── services/          # chatbot, safety, report, email, wellness, reply policy
+│   └── ui/                # sidebar, chat loop, shell, wellness, insights
 ├── tests/
-├── ARCHITECTURE.md        # Production upgrade roadmap
-├── requirements.txt
+├── ARCHITECTURE.md
+├── Dockerfile
 └── README.md
 ```
+
+Chat UX extras (local device, no accounts): Stop pending replies, conversation rename/delete/export, voice confirm-before-send, light/dark premium shell.
 
 ---
 
