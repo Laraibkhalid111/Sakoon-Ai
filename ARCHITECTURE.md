@@ -82,7 +82,8 @@ Post–Phase 6 visual/UX pass on Streamlit (no rewrite):
 - Perf (P2) — compile CSS once/process, skip repeat schema init, cache recent sessions, trim sidebar into expanders
 - Unified premium shell (P3) — chat-first column vs wide rooms, bilingual chrome, dark/mobile polish, soft chat intro
 - Conversation mgmt (P4) — rename / delete / Markdown export; auto-title from first message; title column migration
-- Stop generation / message edit / file upload / TTS — still deferred
+- Chat polish (P5) — Stop cancels pending generation; auto-scroll; main voice confirm/send (no TTS)
+- Thin `app.py` / more tests / docs — still deferred as P6
 
 ## Explicit non-goals for Phases 0–2
 

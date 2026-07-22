@@ -26,6 +26,7 @@ _CHAT_KEYS = (
     "voice_recorder_key", "pending_ai_turn", "session_closed",
     "active_coping", "coping_step", "coping_completed",
     "journal_notes", "journal_draft", "history_readonly", "main_view",
+    "cancel_generation", "voice_draft",
 )
 
 
@@ -42,6 +43,34 @@ def _inject_welcome() -> None:
         "role": "assistant",
         "content": w["reply_to_user"],
     }]
+
+
+def cancel_ai_turn(*, keep_user_message: bool = True) -> None:
+    """
+    Cancel a queued or in-flight generation.
+    Keeps the last user message by default (ChatGPT-style stop).
+    """
+    st.session_state.cancel_generation = True
+    st.session_state.pending_ai_turn = None
+    st.session_state.thinking = False
+    st.session_state.regenerate_requested = False
+    if keep_user_message:
+        return
+    msgs = st.session_state.get("messages") or []
+    if msgs and msgs[-1].get("role") == "user":
+        msgs.pop()
+    hist = st.session_state.get("groq_history") or []
+    if hist and hist[-1].get("role") == "user":
+        hist.pop()
+
+
+def generation_was_cancelled() -> bool:
+    """Consume cancel flag; True if caller should abort."""
+    if st.session_state.pop("cancel_generation", False):
+        st.session_state.pending_ai_turn = None
+        st.session_state.thinking = False
+        return True
+    return False
 
 
 def ensure_local_identity(preferred_language: str = "english") -> int | None:
@@ -103,6 +132,8 @@ def start_new_chat() -> None:
     st.session_state.journal_draft = ""
     st.session_state.history_readonly = False
     st.session_state.main_view = "chat"
+    st.session_state.cancel_generation = False
+    st.session_state.voice_draft = None
 
     _inject_welcome()
 

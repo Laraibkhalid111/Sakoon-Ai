@@ -209,7 +209,9 @@ def render_bubble(
                 show_regenerate=show_regenerate,
             )
     else:
-        prefix = '<span class="sakoon-voice-badge">Voice</span> ' if is_voice else ""
+        from sakoon.ui.shell import chrome_copy
+        voice_lbl = escape_html(chrome_copy(st.session_state.get("lang", "english"))["voice_badge"])
+        prefix = f'<span class="sakoon-voice-badge">{voice_lbl}</span> ' if is_voice else ""
         st.markdown(
             f'<div class="sakoon-bubble-wrap user">'
             f'<div class="sakoon-bubble-col user">'
@@ -278,12 +280,25 @@ def _render_message_actions(
                     st.rerun()
 
 
-def render_scroll_to_bottom() -> None:
-    """Lightweight jump-to-latest control for long chats."""
+def render_thinking_bar(lang: str) -> None:
+    label = "...ساکون جواب لکھ رہا ہے" if lang == "urdu" else "Sakoon is composing a reply…"
+    st.markdown(
+        f'<div class="sakoon-thinking-bar" role="status" aria-live="polite">'
+        f'<div class="sakoon-typing"><span></span><span></span><span></span></div>'
+        f"<span>{escape_html(label)}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_scroll_to_bottom(*, auto: bool = False) -> None:
+    """Jump-to-latest control; set auto=True after new messages to scroll once."""
     from sakoon.ui.shell import chrome_copy
 
     ui = chrome_copy(st.session_state.get("lang", "english"))
+    do_scroll = auto
     if st.button(ui["latest"], key="scroll_latest", help=ui["latest_help"]):
+        do_scroll = True
+    if do_scroll:
         components.html(
             """
             <script>
@@ -293,6 +308,8 @@ def render_scroll_to_bottom() -> None:
               if (main) main.scrollTo({ top: main.scrollHeight, behavior: 'smooth' });
               const body = doc.scrollingElement || doc.documentElement;
               body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' });
+              const chat = doc.querySelector('[data-testid="stBottomBlockContainer"]');
+              if (chat) chat.scrollIntoView({ behavior: 'smooth', block: 'end' });
             })();
             </script>
             """,
@@ -301,14 +318,103 @@ def render_scroll_to_bottom() -> None:
         )
 
 
-def render_thinking_bar(lang: str) -> None:
-    label = "...ساکون جواب لکھ رہا ہے" if lang == "urdu" else "Sakoon is composing a reply…"
+def render_stop_bar(lang: str) -> bool:
+    """Show Stop control while generating. Returns True if Stop was clicked."""
+    from sakoon.ui.shell import chrome_copy
+
+    ui = chrome_copy(lang)
+    cols = st.columns([3, 1])
+    with cols[0]:
+        render_thinking_bar(lang)
+    with cols[1]:
+        return st.button(
+            ui["stop"],
+            key="btn_stop_generation",
+            help=ui["stop_help"],
+            use_container_width=True,
+            type="secondary",
+        )
+
+
+def render_voice_composer(lang: str, *, disabled: bool = False) -> None:
+    """
+    Main-chat voice card: record → confirm transcript → send/discard.
+    Sets pending_voice_text when user confirms send.
+    """
+    from sakoon.services.chatbot import transcribe_audio
+    from sakoon.services.prompts import ERROR_COPY
+    from sakoon.ui.shell import chrome_copy
+
+    ui = chrome_copy(lang)
     st.markdown(
-        f'<div class="sakoon-thinking-bar" role="status" aria-live="polite">'
-        f'<div class="sakoon-typing"><span></span><span></span><span></span></div>'
-        f"<span>{escape_html(label)}</span></div>",
+        f'<div class="sakoon-voice-card"><h4>{escape_html(ui["voice_card_title"])}</h4>'
+        f'<p style="margin:0 0 8px;font-size:12.5px;color:var(--muted)">'
+        f'{escape_html(ui["voice_card_hint"])}</p></div>',
         unsafe_allow_html=True,
     )
+
+    draft = st.session_state.get("voice_draft")
+    if draft:
+        if "voice_draft_editor" not in st.session_state:
+            st.session_state.voice_draft_editor = draft
+        st.text_area(
+            "Transcript",
+            key="voice_draft_editor",
+            height=80,
+            label_visibility="collapsed",
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button(ui["voice_send"], key="voice_send_btn", type="primary", use_container_width=True):
+                text = (st.session_state.get("voice_draft_editor") or draft or "").strip()
+                st.session_state.voice_draft = None
+                if "voice_draft_editor" in st.session_state:
+                    del st.session_state["voice_draft_editor"]
+                if text:
+                    st.session_state.pending_voice_text = text
+                    st.session_state.whisper_error = False
+                st.session_state.voice_recorder_key = int(st.session_state.get("voice_recorder_key", 0)) + 1
+                st.rerun()
+        with c2:
+            if st.button(ui["voice_discard"], key="voice_discard_btn", use_container_width=True):
+                st.session_state.voice_draft = None
+                if "voice_draft_editor" in st.session_state:
+                    del st.session_state["voice_draft_editor"]
+                st.session_state.voice_recorder_key = int(st.session_state.get("voice_recorder_key", 0)) + 1
+                st.rerun()
+        return
+
+    if disabled:
+        st.caption(ui["voice_paused"])
+        return
+
+    audio_val = st.audio_input(
+        label="Record your message",
+        key=f"main_voice_recorder_{st.session_state.get('voice_recorder_key', 0)}",
+        label_visibility="collapsed",
+    )
+    if audio_val is not None:
+        audio_bytes = audio_val.read()
+        with st.spinner("Transcribing…" if lang != "urdu" else "لکھا جا رہا ہے…"):
+            transcript = transcribe_audio(audio_bytes, filename="voice.wav")
+        if transcript:
+            st.session_state.voice_draft = transcript
+            st.session_state.whisper_error = False
+            st.session_state.voice_recorder_key = int(st.session_state.get("voice_recorder_key", 0)) + 1
+            st.rerun()
+        else:
+            st.session_state.whisper_error = True
+            st.session_state.voice_recorder_key = int(st.session_state.get("voice_recorder_key", 0)) + 1
+            st.rerun()
+
+    if st.session_state.get("whisper_error"):
+        fail_copy = (
+            ERROR_COPY["whisper_failure"]["ur"]
+            if lang == "urdu"
+            else ERROR_COPY["whisper_failure"]["en"]
+        )
+        banner("warning", f"⚠️ {fail_copy}")
+        st.session_state.whisper_error = False
 
 
 def mood_pill_html(rating: int | None, lang: str = "english") -> str:

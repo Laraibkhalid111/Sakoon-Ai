@@ -89,7 +89,7 @@ def test_chrome_copy_bilingual_keys():
     required = {
         "nav_label", "dark", "new_chat", "copy", "regen", "latest",
         "disclaimer", "chat_hint", "local_note", "voice", "report",
-        "rename", "delete", "export_md", "manage",
+        "rename", "delete", "export_md", "manage", "stop", "voice_send",
     }
     for lang in ("english", "urdu", "roman_urdu"):
         ui = chrome_copy(lang)

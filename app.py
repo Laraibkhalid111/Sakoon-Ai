@@ -14,7 +14,7 @@ from sakoon.core.rate_limit import allow_chat
 from sakoon.core.metrics import emit
 from sakoon.core.health import check_health
 from sakoon.services.prompts import WELCOME_MESSAGE, ERROR_COPY
-from sakoon.services.chatbot import stream_ai_response, transcribe_audio, generate_report_narrative
+from sakoon.services.chatbot import stream_ai_response, generate_report_narrative
 from sakoon.services.safety import check_crisis
 from sakoon.db import (
     init_db, update_user, create_session, update_session,
@@ -26,11 +26,13 @@ from sakoon.services.emailer import send_email_report
 from sakoon.ui.components import (
     inject_styles, crisis_copy, render_bubble, render_thinking_bar,
     mood_pill_html, lang_badge_html, banner, redirect_copy, timestamp_now,
-    render_brand_header, render_scroll_to_bottom,
+    render_brand_header, render_scroll_to_bottom, render_stop_bar,
+    render_voice_composer,
 )
 from sakoon.ui.coping import render_coping_panel, start_coping, COPING_ACTIONS
 from sakoon.ui.session_ops import (
-    start_new_chat, load_past_session, ensure_local_identity, render_conversation_history,
+    start_new_chat, load_past_session, ensure_local_identity,
+    render_conversation_history, cancel_ai_turn,
 )
 from sakoon.ui.wellness import render_wellness_nav, render_wellness_page
 from sakoon.ui.insights import render_insights_page
@@ -93,6 +95,9 @@ def _init_state():
         "history_readonly": False,
         "main_view": "chat",
         "local_mode": True,
+        "cancel_generation": False,
+        "voice_draft": None,
+        "auto_scroll": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -187,40 +192,9 @@ with st.sidebar:
         st.markdown(mood_pill_html(st.session_state.mood, st.session_state.lang), unsafe_allow_html=True)
 
     with st.expander(_ui["voice"], expanded=False):
-        st.caption(_ui["voice_hint"])
-        lang = st.session_state.lang
+        st.caption(_ui["voice_card_hint"])
         if st.session_state.thinking:
             st.caption(_ui["voice_paused"])
-            audio_val = None
-        else:
-            audio_val = st.audio_input(
-                label="Record your message",
-                key=f"voice_recorder_{st.session_state.voice_recorder_key}",
-                label_visibility="collapsed",
-            )
-
-        if audio_val is not None:
-            audio_bytes = audio_val.read()
-            with st.spinner("Transcribing…" if lang != "urdu" else "لکھا جا رہا ہے…"):
-                transcript = transcribe_audio(audio_bytes, filename="voice.wav")
-
-            if transcript:
-                st.session_state.pending_voice_text = transcript
-                st.session_state.whisper_error = False
-                st.session_state.voice_recorder_key += 1
-                st.rerun()
-            else:
-                st.session_state.whisper_error = True
-                st.session_state.voice_recorder_key += 1
-                st.rerun()
-
-        if st.session_state.whisper_error:
-            fail_copy = (
-                ERROR_COPY["whisper_failure"]["ur"]
-                if lang == "urdu"
-                else ERROR_COPY["whisper_failure"]["en"]
-            )
-            banner("warning", f"⚠️ {fail_copy}")
 
     # Calming exercises (manual entry)
     with st.expander(
@@ -420,6 +394,14 @@ render_coping_panel(st.session_state.lang)
 
 render_chat_shell_intro(st.session_state.lang, len(st.session_state.messages))
 
+# Stop bar while a reply is pending / generating
+if st.session_state.thinking:
+    if render_stop_bar(st.session_state.lang):
+        cancel_ai_turn()
+        st.session_state._gen_grace_done = False
+        emit("chat_stop", user_id=st.session_state.get("db_user_id"))
+        st.rerun()
+
 # Error banner (DESIGN.md §8)
 if st.session_state.show_error == "groq":
     lang = st.session_state.lang
@@ -464,7 +446,12 @@ for idx, msg in enumerate(st.session_state.messages):
         avatar_label="S" if msg["role"] == "assistant" else _user_avatar,
     )
 
-render_scroll_to_bottom()
+render_scroll_to_bottom(auto=bool(st.session_state.pop("auto_scroll", False)))
+
+render_voice_composer(
+    st.session_state.lang,
+    disabled=bool(st.session_state.thinking),
+)
 
 # ── Chat input handling ───────────────────────────────────────────────────────
 
@@ -505,6 +492,8 @@ def _queue_regenerate() -> bool:
         "regenerate": True,
     }
     st.session_state.thinking = True
+    st.session_state.cancel_generation = False
+    st.session_state._gen_grace_done = False
     emit("chat_regenerate", user_id=st.session_state.get("db_user_id"))
     return True
 
@@ -514,6 +503,7 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
     stream_box = st.empty()
     response = None
     live_text = ""
+    cancelled = False
 
     with stream_box.container():
         render_thinking_bar(st.session_state.lang)
@@ -522,6 +512,9 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
         st.session_state.groq_history,
         current_lang=st.session_state.lang,
     ):
+        if st.session_state.get("cancel_generation"):
+            cancelled = True
+            break
         if event.get("type") == "delta":
             live_text = event.get("text") or ""
             with stream_box.container():
@@ -535,6 +528,28 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
                 )
         elif event.get("type") == "done":
             response = event.get("response")
+
+    if cancelled:
+        st.session_state.cancel_generation = False
+        stream_box.empty()
+        # Keep any partial text the user already saw
+        if live_text and live_text not in ("", "…"):
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": live_text,
+                "is_redirect": False,
+                "is_voice": False,
+                "ts": timestamp_now(),
+            })
+            st.session_state.groq_history.append({
+                "role": "assistant",
+                "content": live_text,
+            })
+            sid = st.session_state.db_session_id
+            if sid:
+                log_message(sid, "assistant", live_text, input_mode="text")
+        st.session_state.auto_scroll = True
+        return
 
     if not isinstance(response, dict):
         from sakoon.services.chatbot import _default_response
@@ -698,22 +713,46 @@ def _process_ai_turn(raw: str, is_voice: bool) -> None:
                     preferred_language=st.session_state.lang,
                 )
 
+    st.session_state.auto_scroll = True
+
 
 # Process regenerate request (from last assistant "Regen" button)
 if st.session_state.pop("regenerate_requested", False) and not st.session_state.thinking:
     if _queue_regenerate():
+        st.session_state._gen_grace_done = False
         st.rerun()
 
-# Process queued AI turn from previous run (input stays disabled while thinking)
+# Drive queued AI turn with a short grace window so Stop can cancel pending work
 if st.session_state.pending_ai_turn and st.session_state.thinking:
-    turn = st.session_state.pending_ai_turn
-    st.session_state.pending_ai_turn = None
-    try:
-        _process_ai_turn(turn["raw"], turn.get("is_voice", False))
-    finally:
-        st.session_state.thinking = False
-        _invalidate_session_caches()
-    st.rerun()
+    from datetime import timedelta
+
+    @st.fragment(run_every=timedelta(milliseconds=450))
+    def _drive_pending_generation():
+        if not st.session_state.get("thinking"):
+            return
+        if st.session_state.get("cancel_generation"):
+            cancel_ai_turn()
+            st.session_state._gen_grace_done = False
+            st.rerun()
+            return
+        turn = st.session_state.get("pending_ai_turn")
+        if not turn:
+            return
+        # First fragment tick: leave Stop clickable; start on the next tick
+        if not st.session_state.get("_gen_grace_done"):
+            st.session_state._gen_grace_done = True
+            return
+        st.session_state.pending_ai_turn = None
+        try:
+            _process_ai_turn(turn["raw"], turn.get("is_voice", False))
+        finally:
+            st.session_state.thinking = False
+            st.session_state._gen_grace_done = False
+            st.session_state.cancel_generation = False
+            _invalidate_session_caches()
+        st.rerun()
+
+    _drive_pending_generation()
 
 # ── Determine raw input (voice transcript takes priority over typed) ──────────
 _is_voice_turn = False
@@ -812,4 +851,6 @@ if raw_input:
 
         st.session_state.pending_ai_turn = {"raw": raw, "is_voice": _is_voice_turn}
         st.session_state.thinking = True
+        st.session_state.cancel_generation = False
+        st.session_state._gen_grace_done = False
         st.rerun()

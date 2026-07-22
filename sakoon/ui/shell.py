@@ -45,6 +45,14 @@ def chrome_copy(lang: str) -> dict[str, str]:
             ),
             "chat_eyebrow": "گفتگو",
             "chat_hint": "یہاں جو محسوس ہو رہا ہے، وہ لکھیں یا بولیں۔",
+            "stop": "روکیں",
+            "stop_help": "جواب بنانا بند کریں",
+            "stopped": "جواب روک دیا گیا۔",
+            "voice_card_title": "آواز سے پیغام",
+            "voice_card_hint": "ریکارڈ کریں، تصدیق کریں، پھر بھیجیں۔",
+            "voice_send": "بھیجیں",
+            "voice_discard": "حذف",
+            "voice_badge": "آواز",
         }
     if lang == "roman_urdu":
         return {
@@ -86,6 +94,14 @@ def chrome_copy(lang: str) -> dict[str, str]:
             ),
             "chat_eyebrow": "Chat",
             "chat_hint": "Jo mehsoos ho raha hai, yahan likhein ya bolain.",
+            "stop": "Stop",
+            "stop_help": "Stop generating a reply",
+            "stopped": "Generation stopped.",
+            "voice_card_title": "Voice message",
+            "voice_card_hint": "Record, confirm transcript, then send.",
+            "voice_send": "Send",
+            "voice_discard": "Discard",
+            "voice_badge": "Voice",
         }
     return {
         "nav_label": "Navigate",
@@ -125,6 +141,14 @@ def chrome_copy(lang: str) -> dict[str, str]:
         ),
         "chat_eyebrow": "Chat",
         "chat_hint": "Type or speak whatever you're feeling — this is your space.",
+        "stop": "Stop",
+        "stop_help": "Stop generating a reply",
+        "stopped": "Generation stopped.",
+        "voice_card_title": "Voice message",
+        "voice_card_hint": "Record, confirm the transcript, then send.",
+        "voice_send": "Send",
+        "voice_discard": "Discard",
+        "voice_badge": "Voice",
     }
 
 
