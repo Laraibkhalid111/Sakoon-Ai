@@ -464,6 +464,74 @@ div[data-testid="stHorizontalBlock"] .stButton > button {
   letter-spacing: -0.02em;
 }
 
+.sakoon-page-hero {
+  margin-bottom: 1.25rem;
+}
+.sakoon-page-hero h2 {
+  font-family: var(--sakoon-display);
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin: 0 0 0.35rem 0;
+  color: var(--color-text-primary);
+}
+.sakoon-page-hero p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+}
+
+.sakoon-nav-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  margin: 0.5rem 0 0.35rem;
+}
+
+.sakoon-history-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.sakoon-history-score {
+  font-weight: 700;
+  color: var(--color-primary-dark);
+  min-width: 42px;
+}
+.sakoon-history-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: var(--color-bg);
+}
+.sakoon-history-prompt {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 6px 0;
+}
+.sakoon-history-body {
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.sakoon-resource-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  background: var(--color-bg);
+}
+.sakoon-resource-card p { margin: 6px 0 0; font-size: 14px; line-height: 1.5; }
+
 .sakoon-coping-card {
   border: 1px solid var(--color-border);
   background: var(--color-surface-solid);

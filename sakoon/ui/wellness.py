@@ -23,6 +23,7 @@ def render_wellness_nav(lang: str) -> str:
     copy = wellness_ui_copy(lang)
     icopy = insights_ui_copy(lang)
     current = st.session_state.get("main_view", "chat")
+    st.markdown('<p class="sakoon-nav-label">Navigate</p>', unsafe_allow_html=True)
     cols = st.columns(3)
     with cols[0]:
         if st.button(
@@ -60,8 +61,11 @@ def render_wellness_page(lang: str) -> None:
     sid = st.session_state.get("db_session_id")
     uid = st.session_state.get("db_user_id")
 
-    st.markdown(f"## {copy['title']}")
-    st.caption(copy["subtitle"])
+    st.markdown(
+        f'<div class="sakoon-page-hero"><h2>{escape_html(copy["title"])}</h2>'
+        f'<p>{escape_html(copy["subtitle"])}</p></div>',
+        unsafe_allow_html=True,
+    )
 
     tab_mood, tab_journal, tab_affirm, tab_resources, tab_ex = st.tabs(
         [
@@ -74,18 +78,25 @@ def render_wellness_page(lang: str) -> None:
     )
 
     with tab_mood:
+        st.markdown('<div class="sakoon-panel">', unsafe_allow_html=True)
         _render_mood_tab(copy, lang, sid, uid)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_journal:
+        st.markdown('<div class="sakoon-panel">', unsafe_allow_html=True)
         _render_journal_tab(copy, sid, uid)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_affirm:
         _render_affirm_tab(copy, lang)
 
     with tab_resources:
+        st.markdown('<div class="sakoon-panel">', unsafe_allow_html=True)
         _render_resources_tab(copy, lang)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with tab_ex:
+        st.markdown('<div class="sakoon-panel">', unsafe_allow_html=True)
         st.caption(copy["exercises_hint"])
         labels = {
             "breathing_exercise": "Breathing" if lang != "urdu" else "سانس",
@@ -99,6 +110,7 @@ def render_wellness_page(lang: str) -> None:
                     start_coping(action)
                     st.session_state.main_view = "chat"
                     st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_mood_tab(copy: dict, lang: str, sid, uid) -> None:
@@ -130,10 +142,14 @@ def _render_mood_tab(copy: dict, lang: str, sid, uid) -> None:
     else:
         for row in logs:
             label = mood_label(int(row["rating"]), lang)
-            note_bit = f" — {row['note']}" if row.get("note") else ""
+            note_bit = f" — {escape_html(row['note'])}" if row.get("note") else ""
             st.markdown(
-                f"- **{int(row['rating'])}/10** ({escape_html(label)})"
-                f"{escape_html(note_bit)} · `{escape_html(str(row.get('created_at') or ''))}`"
+                f'<div class="sakoon-history-row">'
+                f'<span class="sakoon-history-score">{int(row["rating"])}/10</span>'
+                f'<span>{escape_html(label)}{note_bit}</span>'
+                f'<span class="sakoon-ts">{escape_html(str(row.get("created_at") or ""))}</span>'
+                f"</div>",
+                unsafe_allow_html=True,
             )
 
 
@@ -173,11 +189,20 @@ def _render_journal_tab(copy: dict, sid, uid) -> None:
         st.caption(copy["empty"])
     else:
         for row in entries:
-            st.markdown(f"**{escape_html(str(row.get('created_at') or ''))}**")
+            prompt_html = ""
             if row.get("prompt"):
-                st.caption(row["prompt"])
-            st.write(row.get("body") or "")
-            st.divider()
+                prompt_html = (
+                    f'<div class="sakoon-history-prompt">'
+                    f'{escape_html(row.get("prompt") or "")}</div>'
+                )
+            st.markdown(
+                f'<div class="sakoon-history-card">'
+                f'<div class="sakoon-ts">{escape_html(str(row.get("created_at") or ""))}</div>'
+                f"{prompt_html}"
+                f'<div class="sakoon-history-body">{escape_html(row.get("body") or "")}</div>'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
 
 def _render_affirm_tab(copy: dict, lang: str) -> None:
@@ -197,8 +222,10 @@ def _render_resources_tab(copy: dict, lang: str) -> None:
     st.info(copy["resources_note"])
     for res in emergency_resources(lang):
         st.markdown(
-            f"**{escape_html(res['name'])}**  \n"
-            f"{escape_html(res['detail'])}  \n"
-            f"*{escape_html(copy['when'])}* {escape_html(res['when'])}"
+            f'<div class="sakoon-resource-card">'
+            f"<strong>{escape_html(res['name'])}</strong>"
+            f"<p>{escape_html(res['detail'])}</p>"
+            f'<p class="sakoon-ts">{escape_html(copy["when"])}: {escape_html(res["when"])}</p>'
+            f"</div>",
+            unsafe_allow_html=True,
         )
-        st.divider()
