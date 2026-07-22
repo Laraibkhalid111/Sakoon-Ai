@@ -1,21 +1,41 @@
 """
 app.py — Sakoon AI
-Streamlit entrypoint: page config, CSS, sidebar, chat loop, session state.
+Streamlit entrypoint: page config, sidebar, chat loop, session state.
+Business logic lives under sakoon/ (Phase 1 package layout).
 """
 
-import re
-import time
 import streamlit as st
 
-from prompts import WELCOME_MESSAGE, OFF_TOPIC_REDIRECT, ERROR_COPY
-from chatbot import get_ai_response, transcribe_audio, generate_report_narrative
-from safety import check_crisis          # deterministic crisis detector — runs before every Groq call
-from database import (
-    init_db, upsert_user, update_user, create_session, update_session,
+from sakoon.core.logging import setup_logging, get_logger
+from sakoon.core.config import get_settings
+from sakoon.core.security import HELPLINE_NUMBER, HELPLINE_NAME, escape_html
+from sakoon.core.validation import validate_name, validate_email, validate_phone
+from sakoon.core.rate_limit import allow_chat
+from sakoon.core.metrics import emit
+from sakoon.core.health import check_health
+from sakoon.services.prompts import WELCOME_MESSAGE, ERROR_COPY
+from sakoon.services.chatbot import get_ai_response, transcribe_audio, generate_report_narrative
+from sakoon.services.safety import check_crisis
+from sakoon.db import (
+    init_db, update_user, create_session, update_session,
     close_session, log_message, upsert_snapshot, get_recent_sessions,
+    add_mood_log,
 )
-from report import build_report, build_session_data
-from emailer import send_email_report
+from sakoon.services.report import build_report, build_session_data
+from sakoon.services.emailer import send_email_report
+from sakoon.ui.components import (
+    inject_styles, crisis_copy, render_bubble, render_thinking_bar,
+    mood_pill_html, lang_badge_html, banner, redirect_copy, timestamp_now,
+    render_brand_header,
+)
+from sakoon.ui.coping import render_coping_panel, start_coping, COPING_ACTIONS
+from sakoon.ui.session_ops import start_new_chat, load_past_session
+from sakoon.ui.wellness import render_wellness_nav, render_wellness_page
+from sakoon.ui.insights import render_insights_page
+from sakoon.ui.auth import render_auth_gate, render_account_sidebar
+
+setup_logging(get_settings().log_level)
+log = get_logger(__name__)
 
 # ── Page config ────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -24,360 +44,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
-# ── CSS (DESIGN.md §4.2 + §15) ─────────────────────────────────────────────
-CUSTOM_CSS = """
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Nastaliq+Urdu&display=swap" rel="stylesheet">
-<style>
-:root {
-  --color-primary: #5B8AA6;
-  --color-primary-dark: #3F6C86;
-  --color-primary-light: #EAF2F6;
-  --color-secondary: #8FBFA6;
-  --color-secondary-dark: #6E9C84;
-  --color-accent: #D9A25C;
-  --color-bg: #FAF9F7;
-  --color-surface: #FFFFFF;
-  --color-border: #E4E1DB;
-  --color-text-primary: #2B2B2B;
-  --color-text-secondary: #6B6B6B;
-  --color-text-inverse: #FFFFFF;
-  --color-success: #4C9A6A;
-  --color-success-bg: #E9F5EC;
-  --color-warning: #C98A2E;
-  --color-warning-bg: #FBF1E1;
-  --color-error: #C1553D;
-  --color-error-bg: #FBEAE6;
-  --color-crisis: #B23A48;
-  --color-crisis-bg: #FBE9EA;
-  --color-crisis-border: #B23A48;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 16px;
-  --space-4: 24px;
-  --space-5: 32px;
-  --space-6: 48px;
-}
-
-html, body, [class*="css"] {
-  font-family: 'Inter', -apple-system, Segoe UI, sans-serif;
-  background-color: var(--color-bg);
-  color: var(--color-text-primary);
-}
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-  background-color: var(--color-surface) !important;
-  border-right: 1px solid var(--color-border);
-}
-[data-testid="stSidebar"] > div:first-child { padding-top: 1.5rem; }
-
-/* Chat input */
-[data-testid="stChatInput"] textarea {
-  border: 1px solid var(--color-border) !important;
-  border-radius: 12px !important;
-  font-family: 'Inter', sans-serif;
-  background: var(--color-surface) !important;
-}
-[data-testid="stChatInput"] textarea:focus {
-  border: 2px solid var(--color-primary) !important;
-  box-shadow: 0 0 0 3px rgba(91,138,166,0.15) !important;
-}
-
-/* Buttons - Section 6.6 */
-.stButton > button {
-  border-radius: 10px !important;
-  font-family: 'Inter', sans-serif !important;
-  transition: all 0.15s ease !important;
-  padding: 10px 20px !important;
-}
-/* Primary: Generate Report */
-.stButton > button[kind="primary"] {
-  background-color: var(--color-primary) !important;
-  color: var(--color-text-inverse) !important;
-  border: none !important;
-}
-.stButton > button[kind="primary"]:hover {
-  background-color: var(--color-primary-dark) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(63,108,134,0.25) !important;
-}
-.stButton > button[kind="primary"]:active { transform: translateY(0); box-shadow: none !important; }
-.stButton > button[kind="primary"]:disabled { opacity: 0.5; cursor: not-allowed !important; }
-/* Secondary: Resend Email - transparent bg, primary border */
-.stButton > button[kind="secondary"] {
-  background: transparent !important;
-  color: var(--color-primary) !important;
-  border: 1px solid var(--color-primary) !important;
-}
-.stButton > button[kind="secondary"]:hover { background: var(--color-primary-light) !important; }
-.stButton > button[kind="secondary"]:active { background: rgba(91,138,166,0.2) !important; }
-.stButton > button[kind="secondary"]:disabled { opacity: 0.5; cursor: not-allowed !important; }
-/* Fallback for non-kind buttons */
-.stButton > button:not([kind]) {
-  background-color: var(--color-primary) !important;
-  color: var(--color-text-inverse) !important;
-  border: none !important;
-}
-.stButton > button:not([kind]):hover {
-  background-color: var(--color-primary-dark) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(63,108,134,0.25) !important;
-}
-
-/* Chat bubbles */
-.sakoon-bubble-wrap {
-  display: flex;
-  align-items: flex-end;
-  margin-bottom: 14px;
-  animation: fadeUp 0.2s ease;
-}
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-.sakoon-bubble-wrap.user { justify-content: flex-end; }
-.sakoon-bubble-wrap.assistant { justify-content: flex-start; }
-
-.sakoon-avatar {
-  width: 32px; height: 32px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  color: white;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
-  flex-shrink: 0;
-  margin-right: 8px;
-}
-
-.sakoon-bubble {
-  max-width: 75%;
-  padding: 12px 16px;
-  border-radius: var(--radius-lg);
-  font-size: 15px;
-  line-height: 1.6;
-  position: relative;
-}
-@media (max-width: 640px) {
-  .sakoon-bubble {
-    max-width: 88% !important;
-  }
-}
-.sakoon-bubble.assistant {
-  background: var(--color-primary-light);
-  color: var(--color-text-primary);
-  border-bottom-left-radius: 4px;
-}
-.sakoon-bubble.user {
-  background: #F1F7F3;
-  color: var(--color-text-primary);
-  border-bottom-right-radius: 4px;
-}
-.sakoon-bubble.redirect {
-  background: var(--color-warning-bg);
-  border: 1px solid var(--color-warning);
-  color: var(--color-text-primary);
-  font-style: italic;
-  border-radius: 10px;
-  text-align: center;
-  max-width: 80%;
-  margin: 0 auto;
-}
-.sakoon-bubble.urdu {
-  font-family: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaleeq', serif;
-  font-size: 17px;
-  line-height: 1.8;
-  direction: rtl;
-  text-align: right;
-}
-.sakoon-ts {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  margin-top: 4px;
-  text-align: right;
-}
-
-/* Typing indicator */
-.sakoon-typing { display: flex; gap: 5px; padding: 4px 0; }
-.sakoon-typing span {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--color-primary);
-  animation: blink 1.2s infinite;
-}
-.sakoon-typing span:nth-child(2) { animation-delay: 0.2s; }
-.sakoon-typing span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes blink {
-  0%,100% { opacity: 0.3; }
-  50%      { opacity: 1; }
-}
-
-/* Banners */
-.sakoon-banner {
-  padding: 14px 18px;
-  border-radius: 10px;
-  margin-bottom: 12px;
-  font-size: 14px;
-  line-height: 1.5;
-}
-.sakoon-banner.error   { background: var(--color-error-bg);   border: 1px solid var(--color-error);   }
-.sakoon-banner.warning { background: var(--color-warning-bg); border: 1px solid var(--color-warning); }
-.sakoon-banner.success { background: var(--color-success-bg); border: 1px solid var(--color-success); }
-.sakoon-banner.crisis  {
-  background: var(--color-crisis-bg);
-  border: 2px solid var(--color-crisis-border);
-  font-size: 15px;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-}
-
-/* Language badge */
-.sakoon-lang-badge {
-  display: inline-block;
-  background: var(--color-primary-light);
-  color: var(--color-primary-dark);
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-family: 'Inter', sans-serif;
-}
-
-/* Mood pill */
-.sakoon-mood-pill {
-  display: inline-block;
-  padding: 6px 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-family: 'Inter', sans-serif;
-}
-
-/* Disclaimer */
-.sakoon-disclaimer {
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  line-height: 1.5;
-  text-align: center;
-  padding: 12px 8px 0;
-}
-
-/* Hide Streamlit default elements */
-#MainMenu, footer, header { visibility: hidden; }
-.stDeployButton { display: none; }
-</style>
-"""
-st.markdown(re.sub(r"\n\s*\n", "\n", CUSTOM_CSS), unsafe_allow_html=True)
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-def _is_urdu_script(text: str) -> bool:
-    """Return True if text contains Arabic-range Unicode (Urdu script)."""
-    return bool(re.search(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]', text))
-
-
-def _lang_key(lang: str) -> str:
-    return lang if lang in ("english", "urdu", "roman_urdu", "mixed") else "english"
-
-
-def _redirect_copy(lang: str) -> str:
-    return OFF_TOPIC_REDIRECT.get(lang, OFF_TOPIC_REDIRECT["english"])
-
-
-def _ts() -> str:
-    return time.strftime("%I:%M %p")
-
-
-def _render_bubble(role: str, text: str, is_redirect: bool = False, is_voice: bool = False):
-    is_urdu = _is_urdu_script(text)
-    urdu_cls = " urdu" if is_urdu else ""
-    ts = _ts()
-
-    if is_redirect:
-        st.markdown(
-            f'<div class="sakoon-bubble-wrap"><div class="sakoon-bubble redirect{urdu_cls}">'
-            f'⚠️ {text}</div></div>',
-            unsafe_allow_html=True,
-        )
-        return
-
-    if role == "assistant":
-        st.markdown(
-            f'<div class="sakoon-bubble-wrap assistant">'
-            f'<div class="sakoon-avatar">🫶</div>'
-            f'<div>'
-            f'<div class="sakoon-bubble assistant{urdu_cls}">{text}</div>'
-            f'<div class="sakoon-ts">{ts}</div>'
-            f'</div></div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        prefix = "🎙️ " if is_voice else ""
-        st.markdown(
-            f'<div class="sakoon-bubble-wrap user">'
-            f'<div>'
-            f'<div class="sakoon-bubble user{urdu_cls}">{prefix}{text}</div>'
-            f'<div class="sakoon-ts" style="text-align:right">{ts}</div>'
-            f'</div></div>',
-            unsafe_allow_html=True,
-        )
-
-
-def _render_typing():
-    return st.markdown(
-        '<div class="sakoon-bubble-wrap assistant">'
-        '<div class="sakoon-avatar">🫶</div>'
-        '<div class="sakoon-bubble assistant">'
-        '<div class="sakoon-typing"><span></span><span></span><span></span></div>'
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
-
-
-def _mood_pill(rating: int | None) -> str:
-    if rating is None:
-        return ""
-    lang = st.session_state.get("lang", "english")
-    if lang == "urdu":
-        prefix = "🫧 آج کا مزاج: "
-        if rating <= 3:
-            bg, text, label = "var(--color-warning-bg)", "var(--color-warning)", "مشکل وقت"
-        elif rating <= 6:
-            bg, text, label = "var(--color-primary-light)", "var(--color-primary-dark)", "بس گزر رہا ہے"
-        else:
-            bg, text, label = "#EBF5F0", "var(--color-secondary-dark)", "بہتر اور مستحکم ہے"
-    else:
-        prefix = "🫧 Mood today: "
-        if rating <= 3:
-            bg, text, label = "var(--color-warning-bg)", "var(--color-warning)", "Having a hard time"
-        elif rating <= 6:
-            bg, text, label = "var(--color-primary-light)", "var(--color-primary-dark)", "Getting through it"
-        else:
-            bg, text, label = "#EBF5F0", "var(--color-secondary-dark)", "Feeling steady"
-            
-    return (
-        f'<span class="sakoon-mood-pill" style="background:{bg}; color:{text}; font-weight: 600;">'
-        f'{prefix}{label}</span>'
-    )
-
-
-def _lang_badge(lang: str) -> str:
-    labels = {"english": "English", "urdu": "اردو", "roman_urdu": "Roman Urdu", "mixed": "Mixed"}
-    return (
-        f'<span class="sakoon-lang-badge">🌐 {labels.get(lang, "English")}</span>'
-    )
-
-
-def _banner(kind: str, text: str):
-    st.markdown(
-        f'<div class="sakoon-banner {kind}">{text}</div>',
-        unsafe_allow_html=True,
-    )
-
-
-# ── Session state init ───────────────────────────────────────────────────────
 
 def _init_state():
     defaults = {
@@ -402,6 +68,19 @@ def _init_state():
         "whisper_error": False,   # True when Whisper call fails
         "pending_voice_text": None,  # Transcript ready to inject as a message
         "voice_recorder_key": 0,
+        # Anti double-submit: queue user turn, process Groq on next run
+        "pending_ai_turn": None,  # {"raw": str, "is_voice": bool} | None
+        "session_closed": False,
+        "theme": "light",
+        "active_coping": None,
+        "coping_step": 0,
+        "coping_completed": False,
+        "journal_notes": [],
+        "journal_draft": "",
+        "history_readonly": False,
+        "main_view": "chat",
+        "authenticated": False,
+        "auth_username": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -415,6 +94,7 @@ def _init_state():
             "content": w["reply_to_user"],
             "is_redirect": False,
             "is_voice": False,
+            "ts": timestamp_now(),
         })
         st.session_state.groq_history.append({
             "role": "assistant",
@@ -423,11 +103,22 @@ def _init_state():
 
 
 _init_state()
+inject_styles(st.session_state.get("theme", "light"))
 
-# ── DB init + session creation (once per app session) ────────────────────────
+# ── DB init ───────────────────────────────────────────────────────────────────
 _db_ok = init_db()
+if _db_ok and not st.session_state.get("_health_logged"):
+    health = check_health()
+    emit("app_ready", ok=health.get("ok"), has_groq=health.get("settings", {}).get("has_groq"))
+    st.session_state._health_logged = True
+
+# ── Auth gate (Phase 5) — must sign in before using the app ───────────────────
+if not render_auth_gate(st.session_state.get("lang", "english")):
+    st.stop()
+
+# Session for signed-in user
 if _db_ok and st.session_state.db_session_id is None:
-    sid = create_session(user_id=None)
+    sid = create_session(user_id=st.session_state.get("db_user_id"))
     if sid:
         st.session_state.db_session_id = sid
 
@@ -443,32 +134,57 @@ else:
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    # Branding (DESIGN.md §6.1)
-    st.markdown(
-        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">'
-        '<span style="font-size:28px">🫶</span>'
-        '<span style="font-family:Inter,sans-serif;font-size:18px;font-weight:600;'
-        'color:#2B2B2B">Sakoon AI</span></div>',
-        unsafe_allow_html=True,
-    )
-    tagline_ur = "بات کرنے کی ایک پرسکون جگہ" if st.session_state.lang == "urdu" else ""
-    tagline_en = "A calm space to talk"
-    st.markdown(
-        f'<p style="font-size:12px;color:#6B6B6B;margin-top:0;margin-bottom:16px">'
-        f'{tagline_en}'
-        f'{"  ·  " + tagline_ur if tagline_ur else ""}</p>',
-        unsafe_allow_html=True,
-    )
+    render_brand_header(st.session_state.lang)
+    render_account_sidebar()
+
+    # Theme + new chat
+    theme_cols = st.columns(2)
+    with theme_cols[0]:
+        dark_on = st.toggle(
+            "Dark",
+            value=st.session_state.theme == "dark",
+            key="theme_toggle",
+            help="Toggle calm dark theme",
+        )
+        new_theme = "dark" if dark_on else "light"
+        if new_theme != st.session_state.theme:
+            st.session_state.theme = new_theme
+            st.rerun()
+    with theme_cols[1]:
+        if st.button("New chat", use_container_width=True, key="btn_new_chat"):
+            start_new_chat()
+            st.rerun()
+
+    render_wellness_nav(st.session_state.lang)
 
     # Language badge + manual override
-    st.markdown(_lang_badge(st.session_state.lang), unsafe_allow_html=True)
+    st.markdown(lang_badge_html(st.session_state.lang), unsafe_allow_html=True)
     lang_override = st.selectbox(
         "Language override",
         ["Auto", "English", "اردو"],
         label_visibility="collapsed",
         key="lang_override_select",
     )
-    st.markdown('<hr style="border-color:#E4E1DB;margin:16px 0">', unsafe_allow_html=True)
+    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
+
+    # Calming exercises (manual entry)
+    with st.expander(
+        "Calming exercises" if st.session_state.lang != "urdu" else "پرسکون مشقیں",
+        expanded=bool(st.session_state.active_coping),
+    ):
+        labels = {
+            "breathing_exercise": "Breathing" if st.session_state.lang != "urdu" else "سانس",
+            "grounding_exercise": "Grounding" if st.session_state.lang != "urdu" else "گراؤنڈنگ",
+            "journaling_prompt": "Journal" if st.session_state.lang != "urdu" else "جرنل",
+        }
+        ccols = st.columns(3)
+        for i, action in enumerate(COPING_ACTIONS):
+            with ccols[i]:
+                if st.button(labels[action], key=f"btn_start_{action}", use_container_width=True):
+                    start_coping(action)
+                    st.rerun()
+
+    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
 
     # ── Voice Input (DESIGN.md §6.5) ────────────────────────────────────────
     with st.expander("🎙️ Voice Input", expanded=False):
@@ -489,7 +205,6 @@ with st.sidebar:
             )
 
         if audio_val is not None:
-            # Read bytes from the UploadedFile object
             audio_bytes = audio_val.read()
             spinner_copy = (
                 "بغور سن رہے ہیں..." if lang == "urdu" else "Listening carefully..."
@@ -498,17 +213,15 @@ with st.sidebar:
                 transcript = transcribe_audio(audio_bytes, filename="voice.wav")
 
             if transcript:
-                # Store transcript; main loop below will inject it as a message
                 st.session_state.pending_voice_text = transcript
                 st.session_state.whisper_error = False
                 st.session_state.voice_recorder_key += 1
-                st.rerun()  # collapses expander, injects message
+                st.rerun()
             else:
                 st.session_state.whisper_error = True
                 st.session_state.voice_recorder_key += 1
                 st.rerun()
 
-        # Failure banner inside expander (DESIGN.md §6.5)
         if st.session_state.whisper_error:
             fail_copy = (
                 ERROR_COPY["whisper_failure"]["ur"]
@@ -516,17 +229,65 @@ with st.sidebar:
                 else ERROR_COPY["whisper_failure"]["en"]
             )
             st.markdown(
-                f'<div class="sakoon-banner warning" style="margin-top:8px">'  
-                f'⚠️ {fail_copy}</div>',
+                f'<div class="sakoon-banner warning" style="margin-top:8px">'
+                f'⚠️ {escape_html(fail_copy)}</div>',
                 unsafe_allow_html=True,
             )
 
-    st.markdown('<hr style="border-color:#E4E1DB;margin:16px 0">', unsafe_allow_html=True)
+    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
+
+    # Persistent emergency support (DESIGN.md §7.4)
+    with st.expander(
+        "Need help now?" if st.session_state.lang != "urdu" else "ابھی مدد چاہیے؟",
+        expanded=bool(st.session_state.crisis_triggered),
+    ):
+        if st.session_state.lang == "urdu":
+            st.markdown(
+                f"**امنگ مینٹل ہیلتھ ہیلپ لائن:** `{HELPLINE_NUMBER}`  \n"
+                "اگر آپ خطرے میں ہیں تو قریبی ایمرجنسی نمبر پر بھی کال کریں۔"
+            )
+        elif st.session_state.lang == "roman_urdu":
+            st.markdown(
+                f"**{HELPLINE_NAME}:** `{HELPLINE_NUMBER}`  \n"
+                "Agar aap khatre mein hain to local emergency number par bhi call karein."
+            )
+        else:
+            st.markdown(
+                f"**{HELPLINE_NAME}:** `{HELPLINE_NUMBER}`  \n"
+                "If you are in immediate danger, also call your local emergency number."
+            )
 
     # Mood pill
     if st.session_state.mood is not None:
-        st.markdown(_mood_pill(st.session_state.mood), unsafe_allow_html=True)
+        st.markdown(mood_pill_html(st.session_state.mood, st.session_state.lang), unsafe_allow_html=True)
         st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+
+    # Past sessions — loadable
+    recent = get_recent_sessions(limit=8, user_id=st.session_state.get("db_user_id"))
+    if recent:
+        with st.expander(
+            "Conversation history" if st.session_state.lang != "urdu" else "گفتگو کی تاریخ",
+            expanded=False,
+        ):
+            current_id = st.session_state.db_session_id
+            for row in recent:
+                sid = row.get("id")
+                label = row.get("primary_concern") or row.get("name") or f"Session #{sid}"
+                started = row.get("started_at") or ""
+                risk = row.get("risk_level") or "low"
+                is_current = sid == current_id
+                btn_label = f"{'• ' if is_current else ''}{label}"
+                if st.button(
+                    btn_label,
+                    key=f"hist_{sid}",
+                    use_container_width=True,
+                    disabled=is_current,
+                    help=f"{started} · {risk}",
+                ):
+                    if load_past_session(int(sid)):
+                        st.rerun()
+                    else:
+                        st.caption("No messages in that session yet.")
 
     # ── Generate Report (DESIGN.md §6.6 primary button, T5.6) ──────────────
     # Disabled until at least one exchange has happened
@@ -548,6 +309,12 @@ with st.sidebar:
             st.session_state.report_bytes = pdf_bytes
             st.session_state.last_session_data = session_data
             st.session_state.last_narrative = narrative
+
+            # Close DB session once a report is generated (end-of-flow signal)
+            sid = st.session_state.db_session_id
+            if sid and not st.session_state.session_closed:
+                if close_session(sid):
+                    st.session_state.session_closed = True
             
             # Automatic email send if email address exists
             email = session_data.get("email")
@@ -633,73 +400,79 @@ with st.sidebar:
 
 
 
-    st.markdown('<hr style="border-color:#E4E1DB;margin:16px 0">', unsafe_allow_html=True)
+    st.markdown('<hr style="border-color:var(--color-border);margin:16px 0">', unsafe_allow_html=True)
     st.markdown(
-        '<p class="sakoon-disclaimer">🫶 Sakoon AI is not a substitute for '
-        'professional mental health care. If you are in crisis, please contact '
-        'a licensed professional or call <strong>0311-7786264</strong>.</p>',
+        f'<p class="sakoon-disclaimer">🫶 Sakoon AI is not a substitute for '
+        f'professional mental health care. If you are in crisis, please contact '
+        f'a licensed professional or call <strong>{HELPLINE_NUMBER}</strong>.</p>',
         unsafe_allow_html=True,
     )
 
+
+# ── Main content ──────────────────────────────────────────────────────────────
+
+if st.session_state.get("main_view") == "wellness":
+    # Crisis resources stay reachable from wellness Help tab; still pin if active
+    if st.session_state.crisis_triggered:
+        crisis_text, _ = crisis_copy(st.session_state.lang)
+        st.markdown(
+            f'<div class="sakoon-banner crisis">{crisis_text}</div>',
+            unsafe_allow_html=True,
+        )
+    render_wellness_page(st.session_state.lang)
+    st.stop()
+
+if st.session_state.get("main_view") == "insights":
+    if st.session_state.crisis_triggered:
+        crisis_text, _ = crisis_copy(st.session_state.lang)
+        st.markdown(
+            f'<div class="sakoon-banner crisis">{crisis_text}</div>',
+            unsafe_allow_html=True,
+        )
+    render_insights_page(st.session_state.lang)
+    st.stop()
 
 # ── Main chat area ────────────────────────────────────────────────────────────
 
 # Crisis pinned card (DESIGN.md §7) — exact hard-coded copy, never LLM-generated
 if st.session_state.crisis_triggered:
-    lang = st.session_state.lang
-    if lang == "urdu":
-        crisis_text = (
-            "💙 <strong>لگتا ہے آپ اس وقت کسی بہت مشکل دور سے گزر رہے ہیں۔ "
-            "آپ کو یہ اکیلے نہیں سہنا۔ اگر آپ فوری خطرے میں ہیں یا خود کو نقصان پہنچانے کا "
-            "سوچ رہے ہیں، تو ابھی رابطہ کریں:</strong><br><br>"
-            "📞 امنگ مینٹل ہیلتھ ہیلپ لائن (پاکستان): <strong>0311-7786264</strong><br>"
-            "📞 یا اپنے قریبی ایمرجنسی نمبر پر<br><br>"
-            "میں یہاں آپ سے بات کرنے کے لیے موجود ہوں، لیکن براہ کرم کسی ایسے "
-            "شخص سے بھی رابطہ کریں جو آپ کے قریب ہو۔"
-        )
-    else:
-        crisis_text = (
-            "💙 <strong>It sounds like you're going through something really heavy right now. "
-            "You don't have to face this alone. If you're in immediate danger or thinking "
-            "about harming yourself, please reach out right now:</strong><br><br>"
-            "📞 Umang Mental Health Helpline (Pakistan): <strong>0311-7786264</strong><br>"
-            "📞 Or your local emergency number<br><br>"
-            "I'm still here to talk with you, but please also consider reaching "
-            "a person who can be there with you."
-        )
+    crisis_text, _ = crisis_copy(st.session_state.lang)
     st.markdown(
         f'<div class="sakoon-banner crisis">{crisis_text}</div>',
         unsafe_allow_html=True,
     )
 
-# Whisper failure banner in main area (only if expander is collapsed/not shown)
-if st.session_state.get("whisper_error") and not st.session_state.get("pending_voice_text"):
-    pass  # shown inside the expander; avoid double-display
+# Interactive coping / breathing / journal panel
+render_coping_panel(st.session_state.lang)
 
 # Error banner (DESIGN.md §8)
 if st.session_state.show_error == "groq":
     lang = st.session_state.lang
     msg = ERROR_COPY["groq_failure"]["ur" if lang == "urdu" else "en"]
-    _banner("error", f"❌ {msg}")
+    banner("error", f"❌ {msg}")
 
 # Non-alarming DB write failure banner (DESIGN.md §8)
 if st.session_state.db_error:
     lang = st.session_state.lang
     msg = ERROR_COPY["db_failure"]["ur" if lang == "urdu" else "en"]
-    _banner("warning", f"⚠️ {msg}")
-    st.session_state.db_error = False  # reset after display so it doesn't persist
+    banner("warning", f"⚠️ {msg}")
+    st.session_state.db_error = False
+
+# Smoother thinking status
+if st.session_state.thinking:
+    render_thinking_bar(st.session_state.lang)
 
 # Chat history
-for msg in st.session_state.messages:
-    _render_bubble(
+for idx, msg in enumerate(st.session_state.messages):
+    render_bubble(
         role=msg["role"],
         text=msg["content"],
         is_redirect=msg.get("is_redirect", False),
         is_voice=msg.get("is_voice", False),
+        ts=msg.get("ts"),
+        msg_index=idx,
+        enable_markdown=(msg["role"] == "assistant" and not msg.get("is_redirect", False)),
     )
-
-# Typing indicator placeholder
-thinking_placeholder = st.empty()
 
 # ── Chat input handling ───────────────────────────────────────────────────────
 
@@ -717,6 +490,169 @@ else:
 
 user_input = st.chat_input(placeholder_text, disabled=st.session_state.thinking)
 
+
+def _process_ai_turn(raw: str, is_voice: bool) -> None:
+    """Call Groq and persist the assistant reply for a queued user turn."""
+    response = get_ai_response(
+        st.session_state.groq_history,
+        current_lang=st.session_state.lang,
+    )
+
+    # ── Handle error ──────────────────────────────────────────────────
+    if response.get("_error"):
+        st.session_state.show_error = "groq"
+    else:
+        st.session_state.show_error = None
+
+    # ── Update session language ───────────────────────────────────────
+    detected = response.get("detected_language", "english")
+    st.session_state.detected_lang = detected
+
+    lang_override_val = st.session_state.get("lang_override_select", "Auto")
+    if lang_override_val == "English":
+        st.session_state.lang = "english"
+    elif lang_override_val == "اردو":
+        st.session_state.lang = "urdu"
+    else:
+        st.session_state.lang = detected
+
+    lang = st.session_state.lang
+    st.session_state.stage = response.get("conversation_stage", st.session_state.stage)
+
+    # ── Merge extracted profile fields & validate (DESIGN.md §8, T7.4) ──
+    ext = response.get("extracted", {})
+    profile = st.session_state.profile
+
+    valid_name, name_val = validate_name(ext.get("name"))
+    if valid_name and name_val:
+        profile["name"] = name_val
+    elif ext.get("name"):
+        valid_name = False
+    else:
+        valid_name = True
+
+    valid_email, email_val = validate_email(ext.get("email"))
+    if valid_email and email_val:
+        profile["email"] = email_val
+    elif ext.get("email"):
+        valid_email = False
+    else:
+        valid_email = True
+
+    valid_phone, phone_val = validate_phone(ext.get("phone"))
+    if valid_phone and phone_val:
+        profile["phone"] = phone_val
+    elif ext.get("phone"):
+        valid_phone = False
+    else:
+        valid_phone = True
+
+    if ext.get("primary_concern"):
+        profile["primary_concern"] = ext["primary_concern"]
+
+    if ext.get("mood_rating") is not None:
+        new_mood = ext["mood_rating"]
+        prev_mood = st.session_state.get("mood")
+        profile["mood_rating"] = new_mood
+        st.session_state.mood = new_mood
+        # Persist only when mood changes (avoid duplicate rows each turn)
+        if prev_mood != new_mood:
+            add_mood_log(
+                rating=new_mood,
+                note=None,
+                session_id=st.session_state.get("db_session_id"),
+                user_id=st.session_state.get("db_user_id"),
+                source="chat",
+            )
+
+    for list_field in ("symptoms", "possible_triggers", "risk_flags"):
+        existing = profile.get(list_field, [])
+        new_items = ext.get(list_field, [])
+        merged = list(dict.fromkeys(existing + new_items))
+        profile[list_field] = merged
+
+    # Track coping suggestion and open interactive panel
+    suggested = response.get("suggested_coping_action")
+    if suggested and suggested != "none":
+        profile["suggested_coping_action"] = suggested
+        coping = profile.get("coping_suggestions", [])
+        if suggested not in coping:
+            profile["coping_suggestions"] = coping + [suggested]
+        start_coping(suggested)
+
+    st.session_state.profile = profile
+
+    # ── Determine reply (off-topic / validation override per DESIGN.md §8) ──
+    is_on_topic = response.get("is_on_topic", True)
+    is_redirect = False
+
+    if not is_on_topic:
+        reply_text = redirect_copy(lang)
+        is_redirect = True
+    elif not valid_name:
+        reply_text = "مجھے آپ کا نام سمجھ نہیں آیا — میں آپ کو کیا کہہ کر بلاؤں؟" if lang == "urdu" else "I didn't quite catch your name — what should I call you?"
+    elif not valid_email:
+        reply_text = "یہ مکمل ای میل نہیں لگ رہی — ایک بار دوبارہ چیک کر لیں؟" if lang == "urdu" else "That doesn't look like a complete email — mind double-checking it?"
+    elif not valid_phone:
+        reply_text = "براہ کرم اپنا نمبر کوڈ کے ساتھ لکھیں، مثلاً +923001234567" if lang == "urdu" else "Could you share your number with the country code, like +923001234567?"
+    else:
+        reply_text = response.get("reply_to_user", "...")
+        is_redirect = False
+
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": reply_text,
+        "is_redirect": is_redirect,
+        "is_voice": False,
+        "ts": timestamp_now(),
+    })
+    st.session_state.groq_history.append({
+        "role": "assistant",
+        "content": reply_text,
+    })
+
+    # ── Persist: log assistant msg, upsert snapshot, update user/session ─
+    profile = st.session_state.profile
+    sid = st.session_state.db_session_id
+    if sid:
+        if not log_message(sid, "assistant", reply_text, input_mode="text"):
+            st.session_state.db_error = True
+
+        ok = upsert_snapshot(
+            session_id=sid,
+            mood_rating=profile.get("mood_rating"),
+            symptoms=profile.get("symptoms", []),
+            triggers=profile.get("possible_triggers", []),
+            coping_suggestions=profile.get("coping_suggestions", []),
+        )
+        if not ok:
+            st.session_state.db_error = True
+
+        if profile.get("primary_concern"):
+            update_session(sid, primary_concern=profile["primary_concern"])
+
+        if profile.get("name") or profile.get("email"):
+            uid = st.session_state.db_user_id
+            if uid is not None:
+                update_user(
+                    uid,
+                    name=profile.get("name"),
+                    email=profile.get("email"),
+                    phone=profile.get("phone"),
+                    preferred_language=st.session_state.lang,
+                )
+
+
+# Process queued AI turn from previous run (input stays disabled while thinking)
+if st.session_state.pending_ai_turn and st.session_state.thinking:
+    turn = st.session_state.pending_ai_turn
+    st.session_state.pending_ai_turn = None
+    try:
+        _process_ai_turn(turn["raw"], turn.get("is_voice", False))
+    finally:
+        st.session_state.thinking = False
+    st.rerun()
+
 # ── Determine raw input (voice transcript takes priority over typed) ──────────
 _is_voice_turn = False
 if st.session_state.pending_voice_text:
@@ -724,7 +660,7 @@ if st.session_state.pending_voice_text:
     st.session_state.pending_voice_text = None
     st.session_state.whisper_error = False
     _is_voice_turn = True
-elif user_input and user_input.strip():
+elif user_input and user_input.strip() and not st.session_state.thinking:
     raw_input = user_input.strip()
 else:
     raw_input = None
@@ -733,21 +669,19 @@ if raw_input:
     raw = raw_input
 
     # ── SAFETY CHECK — runs deterministically BEFORE Groq (IDEA.md §8) ────
-    # This is a hard check — it cannot be prompted away. If it fires, the
-    # normal LLM reply is bypassed entirely for this turn.
     is_crisis = check_crisis(raw)
 
-    # ── Add user message to display + Groq history ─────────────────────────
     st.session_state.messages.append({
         "role": "user",
         "content": raw,
         "is_redirect": False,
         "is_voice": _is_voice_turn,
+        "ts": timestamp_now(),
     })
     st.session_state.groq_history.append({"role": "user", "content": raw})
 
     if is_crisis:
-        # ── CRISIS BRANCH — bypass Groq, set flags, persist, rerun ──────────
+        emit("crisis_detected", user_id=st.session_state.get("db_user_id"))
         if not st.session_state.crisis_triggered:
             st.session_state.crisis_triggered = True
         profile = st.session_state.profile
@@ -756,31 +690,17 @@ if raw_input:
             profile["risk_flags"] = risk_flags + ["crisis_detected"]
         st.session_state.profile = profile
 
-        # Determine language for the crisis reply (T8.2)
-        lang = st.session_state.lang
-        if lang == "urdu":
-            crisis_reply = (
-                "میں آپ کی بات سن رہا ہوں، اور ایسا لگتا ہے کہ آپ بہت زیادہ تکلیف میں ہیں۔ "
-                "میں نے اس چیٹ کے اوپر مدد کے لیے معلومات فراہم کی ہیں تاکہ وہ آسانی سے مل سکیں۔ "
-                "براہ کرم ابھی ان سے یا کسی قریبی شخص سے رابطہ کریں۔ میں اب بھی آپ سے بات کرنے کے لیے یہاں موجود ہوں۔"
-            )
-        else:
-            crisis_reply = (
-                "I hear you, and it sounds like you're carrying a lot of pain. "
-                "I have placed helpline resources at the top of our chat so they are easy to find. "
-                "Please connect with them, or a trusted person, right now. I am still here to talk with you."
-            )
+        _, crisis_reply = crisis_copy(st.session_state.lang)
 
-        # Add assistant message to display + Groq history
         st.session_state.messages.append({
             "role": "assistant",
             "content": crisis_reply,
             "is_redirect": False,
             "is_voice": False,
+            "ts": timestamp_now(),
         })
         st.session_state.groq_history.append({"role": "assistant", "content": crisis_reply})
 
-        # Persist: log the user message + assistant reply + mark session as crisis
         sid = st.session_state.db_session_id
         if sid:
             ok1 = log_message(sid, "user", raw, input_mode="voice" if _is_voice_turn else "text")
@@ -792,166 +712,34 @@ if raw_input:
         st.rerun()
 
     else:
-        # ── NORMAL BRANCH — log user msg, call Groq ────────────────────────
+        # Rate-limit Groq path only (crisis replies always allowed)
+        user_key = str(st.session_state.get("db_user_id") or st.session_state.get("auth_username") or "anon")
+        rl = allow_chat(user_key)
+        if not rl.allowed:
+            emit("rate_limited_chat", user_id=st.session_state.get("db_user_id"), retry=round(rl.retry_after_sec, 1))
+            wait_s = max(1, int(rl.retry_after_sec) + 1)
+            slow_msg = (
+                f"You're sending messages a bit quickly. Please wait about {wait_s} seconds, then try again."
+                if st.session_state.lang != "urdu"
+                else f"آپ تھوڑے تیزی سے پیغام بھیج رہے ہیں۔ براہِ کرم تقریباً {wait_s} سیکنڈ انتظار کریں۔"
+            )
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": slow_msg,
+                "is_redirect": False,
+                "is_voice": False,
+                "ts": timestamp_now(),
+            })
+            st.session_state.groq_history.append({"role": "assistant", "content": slow_msg})
+            st.rerun()
+
+        emit("chat_turn_queued", user_id=st.session_state.get("db_user_id"), voice=_is_voice_turn)
+        # Queue Groq work for the next run so chat_input can disable while thinking
         sid = st.session_state.db_session_id
         if sid:
             if not log_message(sid, "user", raw, input_mode="voice" if _is_voice_turn else "text"):
                 st.session_state.db_error = True
 
+        st.session_state.pending_ai_turn = {"raw": raw, "is_voice": _is_voice_turn}
         st.session_state.thinking = True
-        with thinking_placeholder:
-            _render_typing()
-
-        response = get_ai_response(
-            st.session_state.groq_history,
-            current_lang=st.session_state.lang,
-        )
-
-        st.session_state.thinking = False
-        thinking_placeholder.empty()
-
-        # ── Handle error ──────────────────────────────────────────────────
-        if response.get("_error"):
-            st.session_state.show_error = "groq"
-        else:
-            st.session_state.show_error = None
-
-        # ── Update session language ───────────────────────────────────────
-        detected = response.get("detected_language", "english")
-        st.session_state.detected_lang = detected
-        
-        # Resolve active language
-        lang_override_val = st.session_state.get("lang_override_select", "Auto")
-        if lang_override_val == "English":
-            st.session_state.lang = "english"
-        elif lang_override_val == "اردو":
-            st.session_state.lang = "urdu"
-        else:
-            st.session_state.lang = detected
-            
-        lang = st.session_state.lang
-
-        # ── Update conversation stage ─────────────────────────────────────
-        st.session_state.stage = response.get("conversation_stage", st.session_state.stage)
-
-        # ── Merge extracted profile fields & validate (DESIGN.md §8, T7.4) ──
-        ext = response.get("extracted", {})
-        profile = st.session_state.profile
-        
-        valid_name = True
-        name_val = ext.get("name")
-        if name_val:
-            name_val = name_val.strip()
-            if not name_val or name_val.isdigit():
-                valid_name = False
-            else:
-                profile["name"] = name_val
-                
-        valid_email = True
-        email_val = ext.get("email")
-        if email_val:
-            email_val = email_val.strip()
-            if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_val):
-                valid_email = False
-            else:
-                profile["email"] = email_val
-                
-        valid_phone = True
-        phone_val = ext.get("phone")
-        if phone_val:
-            phone_val = phone_val.strip().replace(" ", "").replace("-", "")
-            if not re.match(r"^\+?\d{10,13}$", phone_val):
-                valid_phone = False
-            else:
-                profile["phone"] = phone_val
-                
-        if ext.get("primary_concern"):
-            profile["primary_concern"] = ext["primary_concern"]
-            
-        if ext.get("mood_rating") is not None:
-            profile["mood_rating"] = ext["mood_rating"]
-            st.session_state.mood = ext["mood_rating"]
-            
-        for list_field in ("symptoms", "possible_triggers", "risk_flags"):
-            existing = profile.get(list_field, [])
-            new_items = ext.get(list_field, [])
-            merged = list(dict.fromkeys(existing + new_items))
-            profile[list_field] = merged
-            
-        st.session_state.profile = profile
-
-        # ── Determine reply (off-topic / validation override per DESIGN.md §8) ──
-        is_on_topic = response.get("is_on_topic", True)
-        is_redirect = False
-        
-        if not is_on_topic:
-            reply_text = _redirect_copy(lang)
-            is_redirect = True
-        elif not valid_name:
-            reply_text = "مجھے آپ کا نام سمجھ نہیں آیا — میں آپ کو کیا کہہ کر بلاؤں؟" if lang == "urdu" else "I didn't quite catch your name — what should I call you?"
-        elif not valid_email:
-            reply_text = "یہ مکمل ای میل نہیں لگ رہی — ایک بار دوبارہ چیک کر لیں؟" if lang == "urdu" else "That doesn't look like a complete email — mind double-checking it?"
-        elif not valid_phone:
-            reply_text = "براہ کرم اپنا نمبر کوڈ کے ساتھ لکھیں، مثلاً +923001234567" if lang == "urdu" else "Could you share your number with the country code, like +923001234567?"
-        else:
-            reply_text = response.get("reply_to_user", "...")
-            is_redirect = False
-
-        # ── Add assistant message ─────────────────────────────────────────
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": reply_text,
-            "is_redirect": is_redirect,
-            "is_voice": False,
-        })
-        st.session_state.groq_history.append({
-            "role": "assistant",
-            "content": reply_text,
-        })
-
-        # ── Persist: log assistant msg, upsert snapshot, update user/session ─
-        profile = st.session_state.profile
-        sid = st.session_state.db_session_id
-        if sid:
-            # Log assistant reply
-            if not log_message(sid, "assistant", reply_text, input_mode="text"):
-                st.session_state.db_error = True
-
-            # Upsert symptom snapshot with accumulated extracted data
-            ok = upsert_snapshot(
-                session_id=sid,
-                mood_rating=profile.get("mood_rating"),
-                symptoms=profile.get("symptoms", []),
-                triggers=profile.get("possible_triggers", []),
-                coping_suggestions=[],  # populated in M5 report generation
-            )
-            if not ok:
-                st.session_state.db_error = True
-
-            # Update session primary_concern when first known
-            if profile.get("primary_concern"):
-                update_session(sid, primary_concern=profile["primary_concern"])
-
-            # Create/update user row when contact info first arrives
-            if profile.get("name") or profile.get("email"):
-                uid = st.session_state.db_user_id
-                if uid is None:
-                    uid = upsert_user(
-                        name=profile.get("name"),
-                        email=profile.get("email"),
-                        phone=profile.get("phone"),
-                        preferred_language=st.session_state.lang,
-                    )
-                    if uid:
-                        st.session_state.db_user_id = uid
-                        update_session(sid, user_id=uid)
-                else:
-                    update_user(
-                        uid,
-                        name=profile.get("name"),
-                        email=profile.get("email"),
-                        phone=profile.get("phone"),
-                        preferred_language=st.session_state.lang,
-                    )
-
         st.rerun()

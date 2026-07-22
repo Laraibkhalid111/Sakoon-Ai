@@ -13,14 +13,17 @@ Sakoon AI is a free, bilingual (Urdu + English, voice or text) mental wellness c
 
 ## Key Features
 
-1. **Bilingual Conversational Interface:** Support for English, Urdu Script, and Roman Urdu. Mirrors the user's language/script choice instantly.
-2. **Bilingual Speech-to-Text:** Integration with Groq Whisper (`whisper-large-v3-turbo`) for natural, audio-based inputs.
-3. **Structured Session Profile & Extraction:** Dynamically extracts name, email, phone, primary concern, mood, symptoms, and risk flags via Groq JSON mode.
-4. **Interactive Self-Care:** Offers grounding/breathing exercises directly in the UI with interactive step-by-step guides.
-5. **Deterministic Safety Layer:** Built-in keyword patterns for English, Urdu, and Roman Urdu to intercept crisis topics immediately, show a pinned helpline banner, and send supportive replies.
-6. **PDF Wellness Report:** Generates formatted A4 PDF reports (with embedded Urdu font rendering support).
-7. **Email Delivery:** Automatically emails the PDF report to the user using secure SMTP.
-8. **Secure Database Logging:** Maintains conversation history and risk levels inside SQLite (`sakoon.db`) with zero plain-text secrets.
+1. **Interactive Self-Care:** Offers grounding/breathing exercises and a gentle journal directly in the UI with interactive step-by-step guides.
+2. **Wellness room:** Persistent mood check-ins, journal history, daily affirmations, and emergency support resources (EN / Urdu / Roman Urdu).
+3. **Insights dashboard:** Mood trends, check-in streaks, daily activity charts, and a weekly summary from your real logs.
+4. **Premium chat UI:** Light/dark calm themes, markdown replies, copy buttons, thinking status, and loadable conversation history.
+5. **Bilingual Conversational Interface:** Support for English, Urdu Script, and Roman Urdu. Mirrors the user's language/script choice instantly.
+6. **Bilingual Speech-to-Text:** Integration with Groq Whisper (`whisper-large-v3-turbo`) for natural, audio-based inputs.
+7. **Structured Session Profile & Extraction:** Dynamically extracts name, email, phone, primary concern, mood, symptoms, and risk flags via Groq JSON mode.
+8. **Deterministic Safety Layer:** Built-in keyword patterns for English, Urdu, and Roman Urdu to intercept crisis topics immediately, show a pinned helpline banner, and send supportive replies.
+9. **PDF Wellness Report:** Generates formatted A4 PDF reports (with embedded Urdu font rendering support).
+10. **Email Delivery:** Automatically emails the PDF report to the user using secure SMTP.
+11. **Secure Database Logging:** Maintains conversation history, mood logs, journal entries, and risk levels inside SQLite (`sakoon.db`).
 
 ---
 
@@ -34,7 +37,9 @@ Sakoon AI is a free, bilingual (Urdu + English, voice or text) mental wellness c
 | Storage | SQLite (`sakoon.db`) |
 | PDF generation | fpdf2 |
 | Email | Gmail SMTP (smtplib stdlib) |
-| Deployment | Streamlit Community Cloud |
+| Deployment | Streamlit Community Cloud **or** Docker (`Dockerfile` / `docker compose`) |
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the production upgrade roadmap (evolutionary — no greenfield rewrite).
 
 ---
 
@@ -42,16 +47,21 @@ Sakoon AI is a free, bilingual (Urdu + English, voice or text) mental wellness c
 
 ```
 Sakoon-Ai/
-├── app.py                      # Main Streamlit application and layout logic
-├── chatbot.py                  # Groq client wrapper, JSON mode parser, and Whisper STT
-├── safety.py                   # Deterministic regex-based crisis keyword detector
-├── database.py                 # SQLite session storage and message logger
-├── report.py                   # PDF generator (fpdf2) with Unicode Urdu font support
-├── emailer.py                  # SMTP email dispatch utility
-├── prompts.py                  # System instructions, redirect texts, and intake flows
-├── NotoNastaliqUrdu-Regular.ttf # Unicode Urdu font for report rendering
-├── requirements.txt            # Project dependencies
-└── README.md                   # Project documentation
+├── app.py                 # Thin Streamlit entrypoint (orchestration)
+├── sakoon/                # Application package (Phase 1+)
+│   ├── core/              # config, logging, validation, security, paths
+│   ├── db/                # SQLite schema + repositories
+│   ├── services/          # chatbot, safety, report, emailer, prompts
+│   └── ui/                # CSS + chat chrome helpers
+├── chatbot.py … emailer.py  # Thin shims → sakoon.* (compat)
+├── Dockerfile             # Container image (Phase 6)
+├── docker-compose.yml     # App + optional backup profile
+├── scripts/backup_db.py   # SQLite backup CLI
+├── .github/workflows/ci.yml
+├── tests/
+├── ARCHITECTURE.md        # Production upgrade roadmap
+├── requirements.txt
+└── README.md
 ```
 
 ---
@@ -82,6 +92,29 @@ cp .env .streamlit/secrets.toml             # or fill secrets.toml manually
 # 5. Run the application
 streamlit run app.py
 ```
+
+### Docker
+
+```bash
+cp env.example .env   # fill GROQ_API_KEY (and optional email / ENCRYPTION_KEY)
+docker compose up --build
+# App: http://localhost:8501
+# Health: Streamlit built-in GET /_stcore/health (used by Docker HEALTHCHECK)
+
+# One-shot SQLite backup into the data volume:
+docker compose run --rm backup
+```
+
+Local backup without Docker:
+
+```bash
+python scripts/backup_db.py
+python scripts/backup_db.py --list
+```
+
+### CI
+
+Pushes/PRs to `main`/`master` run pytest (Python 3.11 + 3.12). Image build runs on push after tests pass.
 
 ---
 

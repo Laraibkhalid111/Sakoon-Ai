@@ -1,0 +1,37 @@
+services:
+  sakoon:
+    build: .
+    image: sakoon-ai:latest
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      # Persist SQLite + backups across container restarts
+      - sakoon-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  # One-shot / scheduled DB backup: docker compose run --rm backup
+  backup:
+    image: sakoon-ai:latest
+    profiles: ["ops"]
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - sakoon-data:/data
+    entrypoint: ["python", "scripts/backup_db.py"]
+    restart: "no"
+
+volumes:
+  sakoon-data:

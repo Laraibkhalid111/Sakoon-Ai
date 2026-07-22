@@ -1,10 +1,16 @@
 # Sakoon AI — gitignore
+
 # Secrets — NEVER commit these
 .streamlit/secrets.toml
 .env
+.env.*
+env (1)
+env (*)*
 
 # Database
 sakoon.db
+backups/
+data/
 
 # Python build artifacts
 __pycache__/
@@ -15,6 +21,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
 
 # Generated PDF reports
 *.pdf
@@ -34,5 +41,4 @@ Thumbs.db
 *.swp
 *.swo
 
-# Streamlit local
-.streamlit/
+# Keep .streamlit/config.toml shareable; secrets stay ignored above
