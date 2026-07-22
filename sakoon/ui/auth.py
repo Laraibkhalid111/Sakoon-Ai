@@ -19,6 +19,7 @@ def render_auth_gate(lang: str = "english") -> bool:
         return True
 
     render_brand_header(lang)
+    st.markdown('<div class="sakoon-auth-shell">', unsafe_allow_html=True)
     st.markdown("### Sign in to Sakoon")
     st.caption(
         "Your chats, mood logs, and journal stay private to your account."
@@ -91,6 +92,7 @@ def render_auth_gate(lang: str = "english") -> bool:
     st.caption(
         "Sakoon AI is not a substitute for professional mental health care."
     )
+    st.markdown("</div>", unsafe_allow_html=True)
     return False
 
 
