@@ -23,26 +23,23 @@ def test_stream_without_key_returns_auth_error(monkeypatch):
     import sakoon.core.config as cfg
     import sakoon.services.chatbot as bot
 
-    monkeypatch.setattr(
-        cfg,
-        "get_settings",
-        lambda: cfg.Settings(
-            groq_api_key=None,
-            email_address=None,
-            email_app_password=None,
-            smtp_host="smtp.gmail.com",
-            smtp_port=465,
-            chat_model="llama-3.3-70b-versatile",
-            narrative_model="llama-3.1-8b-instant",
-            whisper_model="whisper-large-v3-turbo",
-            max_history_messages=24,
-            log_level="INFO",
-            encryption_key=None,
-            rate_limit_chat_per_min=20,
-            rate_limit_auth_per_min=10,
-            backup_keep=14,
-        ),
+    fake = cfg.Settings(
+        groq_api_key=None,
+        email_address=None,
+        email_app_password=None,
+        smtp_host="smtp.gmail.com",
+        smtp_port=465,
+        chat_model="llama-3.3-70b-versatile",
+        narrative_model="llama-3.1-8b-instant",
+        whisper_model="whisper-large-v3-turbo",
+        max_history_messages=24,
+        log_level="INFO",
+        encryption_key=None,
+        rate_limit_chat_per_min=20,
+        rate_limit_auth_per_min=10,
+        backup_keep=14,
     )
+    monkeypatch.setattr(bot, "get_settings", lambda: fake)
     events = list(bot.stream_ai_response([{"role": "user", "content": "Hello"}]))
     assert len(events) == 1
     assert events[0]["type"] == "done"
