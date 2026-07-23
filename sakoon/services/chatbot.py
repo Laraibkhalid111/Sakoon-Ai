@@ -47,14 +47,31 @@ def truncate_history(conversation_history: list[dict], max_messages: int | None 
     return list(conversation_history[-limit:])
 
 
-def _default_response(lang: str = "english") -> dict:
-    return {
-        "reply_to_user": (
+def _default_response(lang: str = "english", *, error_kind: str | None = "generic") -> dict:
+    if error_kind == "auth":
+        reply = (
+            "Sakoon can't reach Groq — the API key is missing or invalid. "
+            "Add a real GROQ_API_KEY from https://console.groq.com to your `.env` "
+            "(or `.streamlit/secrets.toml`), then restart the app."
+            if lang == "english"
+            else "ساکون Groq تک نہیں پہنچ سکا — API کلید غلط یا موجود نہیں۔ "
+            "`.env` میں درست GROQ_API_KEY ڈالیں اور ایپ دوبارہ چلائیں۔"
+        )
+    elif error_kind == "rate":
+        reply = (
+            "The AI service is busy right now (rate limited). Please wait a few seconds and try again."
+            if lang == "english"
+            else "AI سروس ابھی مصروف ہے — چند سیکنڈ بعد دوبارہ کوشش کریں۔"
+        )
+    else:
+        reply = (
             "I'm having a little trouble responding right now. "
             "Give me a moment and try again."
             if lang == "english"
             else "مجھے ابھی جواب دینے میں تھوڑی مشکل ہو رہی ہے۔ ذرا رکیں اور دوبارہ کوشش کریں۔"
-        ),
+        )
+    return {
+        "reply_to_user": reply,
         "conversation_stage": "check_in",
         "detected_language": lang,
         "extracted": {
@@ -70,6 +87,7 @@ def _default_response(lang: str = "english") -> dict:
         "suggested_coping_action": "none",
         "is_on_topic": True,
         "_error": True,
+        "_error_kind": error_kind or "generic",
     }
 
 
@@ -171,6 +189,11 @@ def stream_ai_response(
       {"type": "done", "response": <validated dict>}
     """
     settings = get_settings()
+    if not settings.groq_api_key:
+        log.error("stream_ai_response aborted: GROQ_API_KEY missing or placeholder")
+        yield {"type": "done", "response": _default_response(current_lang, error_kind="auth")}
+        return
+
     history = truncate_history(conversation_history, settings.max_history_messages)
     if len(conversation_history) > len(history):
         log.info(
@@ -183,6 +206,11 @@ def stream_ai_response(
         {"role": "system", "content": SYSTEM_PROMPT},
         *history,
     ]
+    log.info(
+        "stream_ai_response start model=%s history=%s",
+        settings.chat_model,
+        len(history),
+    )
 
     buffer = ""
     last_shown = ""
@@ -222,11 +250,23 @@ def stream_ai_response(
             log.error("Groq stream returned unparseable JSON (len=%s)", len(buffer))
             yield {"type": "done", "response": _default_response(current_lang)}
             return
+        log.info("stream_ai_response ok reply_len=%s", len(str(data.get("reply_to_user") or "")))
         yield {"type": "done", "response": _validate_and_fix(data)}
 
     except Exception as exc:
-        log.error("stream_ai_response failed: %s", type(exc).__name__)
-        yield {"type": "done", "response": _default_response(current_lang)}
+        name = type(exc).__name__
+        msg = str(exc)
+        # Never log raw API keys if they appear in exception text
+        if "gsk_" in msg:
+            msg = msg.split("gsk_")[0] + "gsk_***"
+        log.error("stream_ai_response failed: %s — %s", name, msg[:240])
+        kind = "generic"
+        low = (name + " " + msg).lower()
+        if "auth" in low or "invalid api key" in low or "401" in low:
+            kind = "auth"
+        elif "rate" in low or "429" in low:
+            kind = "rate"
+        yield {"type": "done", "response": _default_response(current_lang, error_kind=kind)}
 
 
 def generate_report_narrative(session_data: dict) -> str:

@@ -31,6 +31,28 @@ def _secret(key: str, default: str | None = None) -> str | None:
         return default
 
 
+def _clean_secret(value: str | None) -> str | None:
+    """Strip whitespace/quotes; treat placeholders as missing."""
+    if value is None:
+        return None
+    cleaned = value.strip().strip('"').strip("'").strip()
+    if not cleaned:
+        return None
+    low = cleaned.lower()
+    placeholders = {
+        "your_groq_api_key_here",
+        "your_api_key_here",
+        "changeme",
+        "xxx",
+        "api_key",
+        "groq_api_key",
+        "replace_me",
+    }
+    if low in placeholders or low.startswith("your_") or "example" in low:
+        return None
+    return cleaned
+
+
 @dataclass(frozen=True)
 class Settings:
     groq_api_key: str | None
@@ -89,9 +111,9 @@ def get_settings() -> Settings:
         max_hist = 24
 
     return Settings(
-        groq_api_key=_secret("GROQ_API_KEY"),
-        email_address=_secret("EMAIL_ADDRESS"),
-        email_app_password=_secret("EMAIL_APP_PASSWORD"),
+        groq_api_key=_clean_secret(_secret("GROQ_API_KEY")),
+        email_address=_clean_secret(_secret("EMAIL_ADDRESS")),
+        email_app_password=_clean_secret(_secret("EMAIL_APP_PASSWORD")),
         smtp_host=_secret("SMTP_HOST", "smtp.gmail.com") or "smtp.gmail.com",
         smtp_port=smtp_port,
         chat_model=_secret("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile") or "llama-3.3-70b-versatile",
@@ -99,7 +121,7 @@ def get_settings() -> Settings:
         whisper_model=_secret("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo") or "whisper-large-v3-turbo",
         max_history_messages=max_hist,
         log_level=(_secret("LOG_LEVEL", "INFO") or "INFO").upper(),
-        encryption_key=_secret("ENCRYPTION_KEY"),
+        encryption_key=_clean_secret(_secret("ENCRYPTION_KEY")),
         rate_limit_chat_per_min=_int_secret("RATE_LIMIT_CHAT_PER_MIN", 20, minimum=1),
         rate_limit_auth_per_min=_int_secret("RATE_LIMIT_AUTH_PER_MIN", 10, minimum=1),
         backup_keep=_int_secret("BACKUP_KEEP", 14, minimum=1),

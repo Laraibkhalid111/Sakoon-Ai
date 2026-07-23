@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
-
 import streamlit as st
 
+from sakoon.core.logging import get_logger
 from sakoon.core.metrics import emit
 from sakoon.core.rate_limit import allow_chat
 from sakoon.core.validation import validate_email, validate_name, validate_phone
@@ -44,6 +43,8 @@ from sakoon.ui.session_ops import cancel_ai_turn
 from sakoon.ui.shell import render_chat_shell_intro
 from sakoon.ui.sidebar import invalidate_session_caches
 
+log = get_logger(__name__)
+
 
 def render_chat_view() -> None:
     """Render chat chrome, history, voice, input, and drive pending generation."""
@@ -64,7 +65,13 @@ def render_chat_view() -> None:
             emit("chat_stop", user_id=st.session_state.get("db_user_id"))
             st.rerun()
 
-    if st.session_state.show_error == "groq":
+    if st.session_state.show_error == "groq_auth":
+        lang = st.session_state.lang
+        banner("error", f"❌ {ERROR_COPY['groq_auth_failure']['ur' if lang == 'urdu' else 'en']}")
+    elif st.session_state.show_error == "groq_rate":
+        lang = st.session_state.lang
+        banner("warning", f"⚠️ {ERROR_COPY['groq_rate_failure']['ur' if lang == 'urdu' else 'en']}")
+    elif st.session_state.show_error == "groq":
         lang = st.session_state.lang
         banner("error", f"❌ {ERROR_COPY['groq_failure']['ur' if lang == 'urdu' else 'en']}")
 
@@ -152,36 +159,29 @@ def queue_regenerate() -> bool:
 
 
 def drive_pending_generation() -> None:
-    """Fragment-driven start with a short grace window so Stop can cancel pending work."""
+    """
+    Process a queued AI turn on this run.
+    (Previously used a Streamlit fragment grace window that often never fired,
+    leaving thinking=True forever with chat_input disabled.)
+    """
     if not (st.session_state.pending_ai_turn and st.session_state.thinking):
         return
+    if st.session_state.get("cancel_generation"):
+        cancel_ai_turn()
+        st.session_state._gen_grace_done = False
+        return
 
-    @st.fragment(run_every=timedelta(milliseconds=450))
-    def _drive() -> None:
-        if not st.session_state.get("thinking"):
-            return
-        if st.session_state.get("cancel_generation"):
-            cancel_ai_turn()
-            st.session_state._gen_grace_done = False
-            st.rerun()
-            return
-        turn = st.session_state.get("pending_ai_turn")
-        if not turn:
-            return
-        if not st.session_state.get("_gen_grace_done"):
-            st.session_state._gen_grace_done = True
-            return
-        st.session_state.pending_ai_turn = None
-        try:
-            process_ai_turn(turn["raw"], turn.get("is_voice", False))
-        finally:
-            st.session_state.thinking = False
-            st.session_state._gen_grace_done = False
-            st.session_state.cancel_generation = False
-            invalidate_session_caches()
-        st.rerun()
-
-    _drive()
+    turn = st.session_state.pending_ai_turn
+    st.session_state.pending_ai_turn = None
+    log.info("drive_pending_generation start voice=%s", bool(turn.get("is_voice")))
+    try:
+        process_ai_turn(turn["raw"], turn.get("is_voice", False))
+    finally:
+        st.session_state.thinking = False
+        st.session_state._gen_grace_done = False
+        st.session_state.cancel_generation = False
+        invalidate_session_caches()
+    st.rerun()
 
 
 def process_ai_turn(raw: str, is_voice: bool) -> None:
@@ -243,7 +243,15 @@ def process_ai_turn(raw: str, is_voice: bool) -> None:
         if live_text and live_text != "…":
             response["reply_to_user"] = live_text
 
-    st.session_state.show_error = "groq" if response.get("_error") else None
+    st.session_state.show_error = None
+    if response.get("_error"):
+        kind = response.get("_error_kind") or "generic"
+        if kind == "auth":
+            st.session_state.show_error = "groq_auth"
+        elif kind == "rate":
+            st.session_state.show_error = "groq_rate"
+        else:
+            st.session_state.show_error = "groq"
 
     detected = response.get("detected_language", "english")
     st.session_state.detected_lang = detected
@@ -394,6 +402,7 @@ def handle_incoming_user_turn(user_input: str | None) -> None:
         return
 
     emit("chat_turn_queued", user_id=st.session_state.get("db_user_id"), voice=is_voice)
+    log.info("queued user turn chars=%s voice=%s", len(raw), is_voice)
     sid = st.session_state.db_session_id
     if sid:
         if not log_message(sid, "user", raw, input_mode="voice" if is_voice else "text"):

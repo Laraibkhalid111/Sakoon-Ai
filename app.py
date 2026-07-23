@@ -9,7 +9,7 @@ import streamlit as st
 from sakoon.core.config import get_settings
 from sakoon.core.logging import setup_logging
 from sakoon.ui.chat_loop import render_chat_view
-from sakoon.ui.components import crisis_copy, inject_styles
+from sakoon.ui.components import crisis_copy, inject_styles, banner
 from sakoon.ui.insights import render_insights_page
 from sakoon.ui.sidebar import render_sidebar
 from sakoon.ui.state import bootstrap_local_db, init_session_state, resolve_language_override
@@ -32,6 +32,15 @@ inject_styles(
 bootstrap_local_db()
 resolve_language_override()
 render_sidebar()
+
+# Surface missing AI credentials early (chat still opens; replies explain the fix)
+if not get_settings().has_groq and not st.session_state.get("_groq_warn_shown"):
+    banner(
+        "error",
+        "❌ GROQ_API_KEY is missing or still a placeholder. "
+        "Set a real key from https://console.groq.com in `.env`, then restart.",
+    )
+    st.session_state._groq_warn_shown = True
 
 # Alternate rooms
 view = st.session_state.get("main_view", "chat")

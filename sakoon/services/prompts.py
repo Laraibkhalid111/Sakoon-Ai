@@ -184,6 +184,14 @@ ERROR_COPY = {
         "en": "I'm having a little trouble responding right now. Give me a moment and try again.",
         "ur": "مجھے ابھی جواب دینے میں تھوڑی مشکل ہو رہی ہے۔ ذرا رکیں اور دوبارہ کوشش کریں۔",
     },
+    "groq_auth_failure": {
+        "en": "Sakoon can't reach Groq — add a valid GROQ_API_KEY from console.groq.com to `.env`, then restart.",
+        "ur": "ساکون Groq تک نہیں پہنچ سکا — `.env` میں درست GROQ_API_KEY ڈالیں اور ایپ دوبارہ چلائیں۔",
+    },
+    "groq_rate_failure": {
+        "en": "The AI service is busy right now. Please wait a few seconds and try again.",
+        "ur": "AI سروس ابھی مصروف ہے — چند سیکنڈ بعد دوبارہ کوشش کریں۔",
+    },
     "whisper_failure": {
         "en": "Couldn't catch that — could you try recording again, or type instead?",
         "ur": "سمجھ نہیں آیا — دوبارہ ریکارڈ کریں یا لکھ کر بتائیں۔",
