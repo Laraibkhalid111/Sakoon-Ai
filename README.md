@@ -1,106 +1,281 @@
-# Sakoon AI 🫶
+# 🧠 Sakoon AI
+### AI-Powered Mental Wellness Assistant
 
-> **A calm space to talk** / بات کرنے کی ایک پرسکون جگہ
+<p align="center">
 
-Sakoon AI is a free, bilingual (Urdu + English, voice or text) mental wellness companion built with Streamlit and Groq. It listens without judgment, gently explores what you're going through, offers grounding techniques in the moment, builds a personalized recovery plan, and delivers a clean PDF summary — while a deterministic safety layer ensures anyone in genuine crisis is never left with just a chatbot reply.
+![Python](https://img.shields.io/badge/Python-3.11+-blue?style=for-the-badge&logo=python)
+![Streamlit](https://img.shields.io/badge/Streamlit-Web_App-red?style=for-the-badge&logo=streamlit)
+![OpenAI](https://img.shields.io/badge/LLM-AI-green?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)
 
----
-
-## Author
-- **Laraib Khalid**
-
----
-
-## Key Features
-
-1. **Bilingual Conversational Interface:** Support for English, Urdu Script, and Roman Urdu. Mirrors the user's language/script choice instantly.
-2. **Bilingual Speech-to-Text:** Integration with Groq Whisper (`whisper-large-v3-turbo`) for natural, audio-based inputs.
-3. **Structured Session Profile & Extraction:** Dynamically extracts name, email, phone, primary concern, mood, symptoms, and risk flags via Groq JSON mode.
-4. **Interactive Self-Care:** Offers grounding/breathing exercises directly in the UI with interactive step-by-step guides.
-5. **Deterministic Safety Layer:** Built-in keyword patterns for English, Urdu, and Roman Urdu to intercept crisis topics immediately, show a pinned helpline banner, and send supportive replies.
-6. **PDF Wellness Report:** Generates formatted A4 PDF reports (with embedded Urdu font rendering support).
-7. **Email Delivery:** Automatically emails the PDF report to the user using secure SMTP.
-8. **Secure Database Logging:** Maintains conversation history and risk levels inside SQLite (`sakoon.db`) with zero plain-text secrets.
+</p>
 
 ---
 
-## Tech Stack
+## 📖 Overview
 
-| Concern | Tool |
-|---|---|
-| UI / App | Streamlit (≥1.38) |
-| LLM | Groq API (`llama-3.3-70b-versatile`) |
-| Speech-to-Text | Groq Whisper (`whisper-large-v3-turbo`) |
-| Storage | SQLite (`sakoon.db`) |
-| PDF generation | fpdf2 |
-| Email | Gmail SMTP (smtplib stdlib) |
-| Deployment | Streamlit Community Cloud |
+Sakoon AI is an AI-powered mental wellness assistant designed to provide users with a safe and supportive environment for emotional conversations. The application leverages Large Language Models (LLMs), sentiment analysis, and report generation to deliver personalized mental wellness insights.
+
+The goal of Sakoon AI is **not to replace professional therapy**, but to encourage self-reflection, emotional awareness, and healthy coping practices through empathetic AI conversations.
 
 ---
 
-## Directory Structure
+## ✨ Features
+
+- 💬 AI-powered empathetic chatbot
+- 😊 Mood & sentiment analysis
+- 📊 Session report generation
+- 📧 Email summaries
+- 📄 Downloadable wellness reports
+- 🎨 Clean Streamlit interface
+- 🔒 Secure API key management
+- ⚡ Fast and lightweight deployment
+
+---
+
+# 🏗️ System Architecture
 
 ```
-Sakoon-Ai/
-├── app.py                      # Main Streamlit application and layout logic
-├── chatbot.py                  # Groq client wrapper, JSON mode parser, and Whisper STT
-├── safety.py                   # Deterministic regex-based crisis keyword detector
-├── database.py                 # SQLite session storage and message logger
-├── report.py                   # PDF generator (fpdf2) with Unicode Urdu font support
-├── emailer.py                  # SMTP email dispatch utility
-├── prompts.py                  # System instructions, redirect texts, and intake flows
-├── NotoNastaliqUrdu-Regular.ttf # Unicode Urdu font for report rendering
-├── requirements.txt            # Project dependencies
-└── README.md                   # Project documentation
+                User
+                  │
+                  ▼
+          Streamlit Interface
+                  │
+                  ▼
+        Conversation Manager
+                  │
+      ┌───────────┼───────────┐
+      ▼           ▼           ▼
+Prompt Builder  Sentiment   Memory
+                Analysis
+      │           │
+      └──────┬────┘
+             ▼
+         OpenAI API
+             │
+      AI Response Generated
+             │
+      ┌──────┴────────┐
+      ▼               ▼
+ PDF Report      Email Service
+      │               │
+      └──────┬────────┘
+             ▼
+            User
 ```
 
 ---
 
-## Local Setup
+# 🚀 Technologies Used
+
+| Technology | Purpose |
+|------------|----------|
+| Python | Backend |
+| Streamlit | Web Application |
+| OpenAI API | AI Conversations |
+| TextBlob / NLP | Sentiment Analysis |
+| SMTP | Email Reports |
+| FPDF / ReportLab | PDF Generation |
+| TOML | Configuration |
+| Git & GitHub | Version Control |
+
+---
+
+# 📂 Project Structure
+
+```
+Sakoon-AI/
+│
+├── app.py
+├── chatbot.py
+├── emailer.py
+├── report_generator.py
+├── sentiment.py
+├── config.toml
+├── requirements.txt
+├── assets/
+├── reports/
+├── screenshots/
+├── README.md
+└── LICENSE
+```
+
+---
+
+# ⚙️ Installation
+
+## Clone Repository
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/Laraibkhalid111/Sakoon-Ai.git
-cd Sakoon-Ai
+git clone https://github.com/Laraibkhalid111/Sakoon-AI.git
 
-# 2. Create + activate virtual environment
+cd Sakoon-AI
+```
+
+---
+
+## Create Virtual Environment
+
+### Windows
+
+```bash
 python -m venv venv
-# Windows:
+
 venv\Scripts\activate
-# macOS/Linux:
+```
+
+### macOS/Linux
+
+```bash
+python3 -m venv venv
+
 source venv/bin/activate
+```
 
-# 3. Install dependencies
+---
+
+## Install Dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-# 4. Configure secrets
-cp env.example .env                         # fill in real values
-mkdir -p .streamlit
-cp .env .streamlit/secrets.toml             # or fill secrets.toml manually
-# Required keys: GROQ_API_KEY, EMAIL_ADDRESS, EMAIL_APP_PASSWORD
+---
 
-# 5. Run the application
+## Configure API Keys
+
+Create a `.streamlit/secrets.toml` or update `config.toml`
+
+```toml
+OPENAI_API_KEY="your_api_key_here"
+EMAIL="example@gmail.com"
+PASSWORD="your_app_password"
+```
+
+---
+
+## Run Application
+
+```bash
 streamlit run app.py
 ```
 
 ---
 
-## Required Secrets
+# 🧠 How It Works
 
-See [`env.example`](env.example) for documentation of all required keys. Never commit real values — use `.streamlit/secrets.toml` locally (gitignored) and the Streamlit Cloud Secrets panel for deployment.
-
-| Key | Purpose |
-|---|---|
-| `GROQ_API_KEY` | Groq LLM + Whisper STT — free at [console.groq.com](https://console.groq.com) |
-| `EMAIL_ADDRESS` | Gmail address that sends wellness reports |
-| `EMAIL_APP_PASSWORD` | 16-char Gmail App Password (not your normal password) |
-
----
-
-## Disclaimer
-
-Sakoon AI is a self-care support tool, **not** a clinical diagnostic instrument. It is not a substitute for professional mental health care. If you are in crisis, please contact the **Umang Mental Health Helpline (Pakistan): 0311-7786264** or your local emergency services.
+1. User opens Sakoon AI.
+2. User starts a conversation.
+3. Chat messages are sent to the LLM.
+4. Sentiment analysis detects emotional tone.
+5. AI generates supportive responses.
+6. Session data is summarized.
+7. A wellness report is created.
+8. Report can be emailed or downloaded.
 
 ---
 
-*Built by Laraib Khalid with Streamlit · Groq · fpdf2 · sqlite3*
+# 📊 Workflow
+
+```
+User Input
+      │
+      ▼
+Preprocessing
+      │
+      ▼
+Prompt Construction
+      │
+      ▼
+OpenAI API
+      │
+      ▼
+AI Response
+      │
+      ▼
+Sentiment Analysis
+      │
+      ▼
+Report Generation
+      │
+      ▼
+Email / Download
+```
+
+---
+
+# 💡 Future Improvements
+
+- Multi-language support
+- Therapist dashboard
+- User authentication
+- Personalized wellness plans
+- Emotion trend analytics
+- Google Calendar wellness reminders
+
+---
+
+
+
+---
+
+# 📈 Skills Demonstrated
+
+- Artificial Intelligence
+- Prompt Engineering
+- Natural Language Processing
+- Sentiment Analysis
+- Python Development
+- Streamlit
+- API Integration
+- Email Automation
+- PDF Generation
+- UI Design
+- Software Engineering
+- Git & GitHub
+
+---
+
+# 🤝 Contributing
+
+Contributions are welcome!
+
+1. Fork the repository
+2. Create a feature branch
+
+```bash
+git checkout -b feature/new-feature
+```
+
+3. Commit your changes
+
+```bash
+git commit -m "Add new feature"
+```
+
+4. Push
+
+```bash
+git push origin feature/new-feature
+```
+
+5. Open a Pull Request
+
+---
+
+---
+
+# 👨‍💻 Author
+
+**Laraib Khalid**
+
+- GitHub: https://github.com/Laraibkhalid111
+
+
+---
+
+## ⭐ Support
+
+If you found this project helpful, consider giving it a ⭐ on GitHub.
+
+---
